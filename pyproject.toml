@@ -1,0 +1,128 @@
+[project]
+name = "s3-archiver-workspace"
+version = "0.1.0"
+description = "Workspace root for the s3-archiver monorepo."
+requires-python = ">=3.12"
+dependencies = []
+
+[build-system]
+requires = ["hatchling>=1.27.0"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+lint = [
+  "basedpyright>=1.31.3",
+  "ruff>=0.12.11",
+]
+release = [
+  "commitizen>=4.9.1",
+  "pre-commit>=4.3.0",
+]
+test = [
+  "pytest>=8.4.2",
+  "pytest-cov>=7.0.0",
+]
+typecheck = [
+  "boto3-stubs[s3]>=1.40.53",
+  "pyright>=1.1.405",
+]
+
+[tool.commitizen]
+name = "cz_conventional_commits"
+version = "0.1.0"
+version_scheme = "semver2"
+tag_format = "v$version"
+update_changelog_on_bump = true
+annotated_tag = true
+major_version_zero = true
+changelog_file = "CHANGELOG.md"
+version_files = [
+  "VERSION",
+  "pyproject.toml:^version =",
+  "packages/s3_archiver_core/pyproject.toml:^version =",
+  "packages/s3_archiver_cli/pyproject.toml:^version =",
+]
+
+[tool.coverage.run]
+branch = true
+source = [
+  "packages/s3_archiver_core/src/s3_archiver_core",
+  "packages/s3_archiver_cli/src/s3_archiver_cli",
+]
+
+[tool.coverage.report]
+fail_under = 100
+show_missing = true
+skip_covered = false
+
+[tool.pytest.ini_options]
+addopts = [
+  "--strict-config",
+  "--strict-markers",
+]
+filterwarnings = ["error"]
+markers = [
+  "unit: fast tests for isolated modules",
+  "integration: tests requiring LocalStack",
+  "e2e: tests requiring Docker Compose",
+]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = [
+  "B",
+  "C4",
+  "E",
+  "F",
+  "G",
+  "I",
+  "N",
+  "PTH",
+  "RET",
+  "RUF",
+  "SIM",
+  "UP",
+  "W",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["S101"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.basedpyright]
+typeCheckingMode = "all"
+pythonVersion = "3.12"
+include = [
+  "packages",
+  "tests",
+  "scripts",
+]
+reportAny = "error"
+reportExplicitAny = "error"
+reportImplicitOverride = "error"
+reportImplicitStringConcatenation = "error"
+reportImportCycles = "error"
+reportMissingSuperCall = "error"
+reportPrivateLocalImportUsage = "error"
+reportUnknownArgumentType = "error"
+reportUnknownLambdaType = "error"
+reportUnknownMemberType = "error"
+reportUnknownParameterType = "error"
+reportUnknownVariableType = "error"
+reportUnnecessaryTypeIgnoreComment = "error"
+reportUnusedCallResult = "error"
+venvPath = "."
+venv = ".venv"
+
+[tool.uv]
+package = false
+
+[tool.uv.workspace]
+members = ["packages/*"]
