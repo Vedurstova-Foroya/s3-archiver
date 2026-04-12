@@ -1,0 +1,14 @@
+[project]
+name = "s3-archiver-core"
+version = "0.1.0"
+description = "Core services and typed integrations for s3-archiver."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = ["boto3>=1.40.53"]
+
+[build-system]
+requires = ["uv_build>=0.11.6,<0.12.0"]
+build-backend = "uv_build"
+
+[tool.uv]
+package = true
