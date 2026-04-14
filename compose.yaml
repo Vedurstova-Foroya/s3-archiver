@@ -1,0 +1,30 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    env_file:
+      - ${APP_ENV_FILE:-.env}
+    volumes:
+      - app_logs:/var/log/s3-archiver
+
+  localstack:
+    image: localstack/localstack:4.8.1
+    profiles: ["test"]
+    environment:
+      AWS_DEFAULT_REGION: us-east-1
+      SERVICES: s3
+      TEST_S3_BUCKET: s3-archiver-integration
+    healthcheck:
+      test: ["CMD-SHELL", "awslocal s3api list-buckets >/dev/null 2>&1"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    ports:
+      - "4566:4566"
+    volumes:
+      - ./docker/localstack/init:/etc/localstack/init/ready.d:ro
+
+volumes:
+  app_logs:
