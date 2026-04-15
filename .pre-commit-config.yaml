@@ -1,0 +1,76 @@
+default_install_hook_types:
+  - commit-msg
+  - pre-commit
+  - pre-push
+
+repos:
+  - repo: https://github.com/commitizen-tools/commitizen
+    rev: v4.9.1
+    hooks:
+      - id: commitizen
+        stages: [commit-msg]
+
+  - repo: local
+    hooks:
+      - id: format-check
+        name: format-check
+        entry: bash -lc 'uv run ruff format --check .'
+        language: system
+        pass_filenames: false
+        stages: [pre-push]
+
+      - id: lint
+        name: lint
+        entry: bash -lc 'uv run ruff check .'
+        language: system
+        pass_filenames: false
+        stages: [pre-push]
+
+      - id: typecheck
+        name: typecheck
+        entry: bash -lc 'uv run basedpyright'
+        language: system
+        pass_filenames: false
+        stages: [pre-push]
+
+      - id: type-coverage
+        name: type-coverage
+        entry: bash -lc 'uv run python scripts/check_type_coverage.py'
+        language: system
+        pass_filenames: false
+        stages: [pre-push]
+
+      - id: test-unit
+        name: test-unit
+        entry: bash -lc 'uv run pytest tests/unit -m unit'
+        language: system
+        pass_filenames: false
+        stages: [pre-push]
+
+      - id: test-integration
+        name: test-integration
+        entry: bash -lc './scripts/run_integration.sh'
+        language: system
+        pass_filenames: false
+        stages: [pre-push]
+
+      - id: test-e2e
+        name: test-e2e
+        entry: bash -lc './scripts/run_e2e.sh'
+        language: system
+        pass_filenames: false
+        stages: [pre-push]
+
+      - id: test-full
+        name: test-full
+        entry: bash -lc './scripts/run_full_suite.sh'
+        language: system
+        pass_filenames: false
+        stages: [pre-push]
+
+      - id: build
+        name: build
+        entry: bash -lc 'uv build --package s3-archiver-core && uv build --package s3-archiver-cli'
+        language: system
+        pass_filenames: false
+        stages: [pre-push]
