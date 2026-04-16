@@ -37,6 +37,28 @@ uv sync --all-packages --all-groups
 uv run pre-commit install --install-hooks --hook-type commit-msg --hook-type pre-push
 ```
 
+Run the CLI directly on the host during development:
+
+```bash
+cp .env.example .env
+$EDITOR .env
+set -a
+source .env
+set +a
+uv run s3-archiver check --json
+```
+
+If you want to run against LocalStack instead of OCI credentials:
+
+```bash
+docker compose --profile test up -d localstack
+set -a
+source .env.e2e
+set +a
+export S3_ENDPOINT_URL=http://127.0.0.1:4566
+uv run s3-archiver check --json
+```
+
 Run checks:
 
 ```bash
