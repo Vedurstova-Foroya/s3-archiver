@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
+from typing import TypedDict, cast
 
 import pytest
 import s3_archiver_cli.main as cli_module
@@ -13,6 +15,13 @@ from s3_archiver_core.settings import AppSettings
 from typer.testing import CliRunner
 
 RUNNER = CliRunner()
+
+
+class HealthPayload(TypedDict):
+    """Typed CLI health payload."""
+
+    status: str
+    message: str
 
 
 @pytest.mark.unit()
@@ -38,10 +47,11 @@ def test_check_command_emits_json(
     monkeypatch.setattr(cli_module, "configure_logging", configure)
     monkeypatch.setattr(cli_module, "run_health_check", run_check)
 
-    result = RUNNER.invoke(cli_module.app, ["check", "--json"])
+    result = RUNNER.invoke(cli_module.app, ["check"])
 
     assert result.exit_code == 0
-    assert '"status": "ok"' in result.stdout
+    payload = _load_payload(result.stdout)
+    assert payload["status"] == "ok"
 
 
 @pytest.mark.unit()
@@ -54,4 +64,10 @@ def test_check_command_exits_non_zero_on_config_error(monkeypatch: pytest.Monkey
     result = RUNNER.invoke(cli_module.app, ["check"])
 
     assert result.exit_code == 1
-    assert "bad env" in result.stderr
+    payload = _load_payload(result.stderr)
+    assert payload["status"] == "error"
+    assert payload["message"] == "bad env"
+
+
+def _load_payload(output: str) -> HealthPayload:
+    return cast(HealthPayload, json.loads(output))

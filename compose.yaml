@@ -6,6 +6,8 @@ services:
       target: runtime
     env_file:
       - ${APP_ENV_FILE:-.env}
+    environment:
+      LOG_DIR: /var/log/s3-archiver
     volumes:
       - app_logs:/var/log/s3-archiver
 

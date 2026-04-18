@@ -20,6 +20,7 @@ docker compose run --rm app
 ```
 
 The container runs rootless and writes retained JSON logs to the `app_logs` named volume mounted at `/var/log/s3-archiver` in the container.
+For host-native `uv run ...` development, the example env files default `LOG_DIR` to `.local/logs/s3-archiver` so the CLI can create logs without needing root privileges.
 
 ## Local Development
 
@@ -45,7 +46,7 @@ $EDITOR .env
 set -a
 source .env
 set +a
-uv run s3-archiver check --json
+uv run s3-archiver check
 ```
 
 If you want to run against LocalStack instead of OCI credentials:
@@ -56,8 +57,10 @@ set -a
 source .env.e2e
 set +a
 export S3_ENDPOINT_URL=http://127.0.0.1:4566
-uv run s3-archiver check --json
+uv run s3-archiver check
 ```
+
+The host-native commands above write logs under `.local/logs/s3-archiver/`. Docker Compose still overrides `LOG_DIR` inside the container back to `/var/log/s3-archiver` so the named volume behavior is unchanged.
 
 Run checks:
 

@@ -1,4 +1,5 @@
 .DS_Store
+.local/
 .coverage
 .env
 .mypy_cache/

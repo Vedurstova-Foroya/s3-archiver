@@ -4,9 +4,11 @@ FROM python:3.12-slim AS builder
 ENV UV_LINK_MODE=copy
 WORKDIR /app
 COPY --from=uv /uv /uvx /bin/
-COPY pyproject.toml README.md VERSION ./
+COPY pyproject.toml README.md VERSION uv.lock ./
 COPY packages/s3_archiver_core/pyproject.toml packages/s3_archiver_core/pyproject.toml
+COPY packages/s3_archiver_core/README.md packages/s3_archiver_core/README.md
 COPY packages/s3_archiver_cli/pyproject.toml packages/s3_archiver_cli/pyproject.toml
+COPY packages/s3_archiver_cli/README.md packages/s3_archiver_cli/README.md
 COPY packages/s3_archiver_core/src packages/s3_archiver_core/src
 COPY packages/s3_archiver_cli/src packages/s3_archiver_cli/src
 RUN uv sync --frozen --package s3-archiver-cli
