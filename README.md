@@ -38,29 +38,22 @@ uv sync --all-packages --all-groups
 uv run pre-commit install --install-hooks --hook-type commit-msg --hook-type pre-push
 ```
 
-Run the CLI directly on the host during development:
+Run the host-native smoke check:
 
 ```bash
 cp .env.example .env
 $EDITOR .env
-set -a
-source .env
-set +a
-uv run s3-archiver check
+make run
 ```
 
 If you want to run against LocalStack instead of OCI credentials:
 
 ```bash
 docker compose --profile test up -d localstack
-set -a
-source .env.e2e
-set +a
-export S3_ENDPOINT_URL=http://127.0.0.1:4566
-uv run s3-archiver check
+ENV_FILE=.env.e2e S3_ENDPOINT_URL=http://127.0.0.1:4566 make run
 ```
 
-The host-native commands above write logs under `.local/logs/s3-archiver/`. Docker Compose still overrides `LOG_DIR` inside the container back to `/var/log/s3-archiver` so the named volume behavior is unchanged.
+`make run` sources `ENV_FILE` with `set -a`, so the default path is `.env` and LocalStack/dev overrides can be passed inline. Host-native runs write logs under `.local/logs/s3-archiver/`. Docker Compose still overrides `LOG_DIR` inside the container back to `/var/log/s3-archiver` so the named volume behavior is unchanged.
 
 Run checks:
 

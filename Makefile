@@ -1,12 +1,17 @@
 UV ?= uv
 PYTEST ?= $(UV) run pytest
+ENV_FILE ?= .env
 
-.PHONY: bootstrap format-check lint typecheck type-coverage test-unit test-integration test-e2e test-full test build release
+.PHONY: bootstrap run format-check lint typecheck type-coverage test-unit test-integration test-e2e test-full test build release
 
 bootstrap:
 	$(UV) python install 3.12
 	$(UV) sync --all-packages --all-groups
 	$(UV) run pre-commit install --install-hooks --hook-type commit-msg --hook-type pre-push
+
+run:
+	@test -f "$(ENV_FILE)" || { echo "missing env file: $(ENV_FILE)" >&2; exit 1; }
+	@bash -lc 'set -a; source "$(ENV_FILE)"; set +a; if [ -n "$(S3_ENDPOINT_URL)" ]; then export S3_ENDPOINT_URL="$(S3_ENDPOINT_URL)"; fi; $(UV) run s3-archiver check'
 
 format-check:
 	$(UV) run ruff format --check .
