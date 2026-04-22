@@ -19,7 +19,7 @@ services:
       SERVICES: s3
       TEST_S3_BUCKET: s3-archiver-integration
     healthcheck:
-      test: ["CMD-SHELL", "awslocal s3api list-buckets >/dev/null 2>&1"]
+      test: ["CMD-SHELL", "awslocal s3api head-bucket --bucket \"$${TEST_S3_BUCKET}\" >/dev/null 2>&1"]
       interval: 5s
       timeout: 5s
       retries: 20

@@ -28,4 +28,4 @@ RUN groupadd --gid "${APP_GID}" app \
 COPY --from=builder /app /app
 RUN mkdir -p /var/log/s3-archiver && chown -R app:app /app /var/log/s3-archiver
 USER app:app
-CMD ["s3-archiver", "check", "--json"]
+CMD ["s3-archiver", "check"]

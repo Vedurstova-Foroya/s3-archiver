@@ -69,5 +69,20 @@ def test_check_command_exits_non_zero_on_config_error(monkeypatch: pytest.Monkey
     assert payload["message"] == "bad env"
 
 
+@pytest.mark.unit()
+def test_main_runs_typer_application(monkeypatch: pytest.MonkeyPatch) -> None:
+    called = False
+
+    def fake_app() -> None:
+        nonlocal called
+        called = True
+
+    monkeypatch.setattr(cli_module, "app", fake_app)
+
+    cli_module.main()
+
+    assert called is True
+
+
 def _load_payload(output: str) -> HealthPayload:
     return cast(HealthPayload, json.loads(output))

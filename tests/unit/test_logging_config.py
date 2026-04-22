@@ -5,10 +5,11 @@ from __future__ import annotations
 import logging
 from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
+from types import TracebackType
 
 import pytest
-from s3_archiver_core.errors import LoggingError
-from s3_archiver_core.logging_config import configure_logging
+from s3_archiver_core.errors import LoggingError, S3ArchiverError
+from s3_archiver_core.logging_config import JsonLogFormatter, configure_logging
 from s3_archiver_core.settings import AppSettings
 
 
@@ -39,3 +40,30 @@ def test_configure_logging_fails_when_log_dir_is_invalid(
 
     with pytest.raises(LoggingError):
         _ = configure_logging(settings)
+
+
+@pytest.mark.unit()
+def test_json_log_formatter_includes_exception_details() -> None:
+    formatter = JsonLogFormatter()
+    record = logging.getLogger("s3_archiver.test").makeRecord(
+        name="s3_archiver.test",
+        level=logging.ERROR,
+        fn=__file__,
+        lno=1,
+        msg="boom",
+        args=(),
+        exc_info=_exc_info(),
+        extra=None,
+    )
+
+    rendered = formatter.format(record)
+
+    assert '"message": "boom"' in rendered
+    assert '"exception":' in rendered
+
+
+def _exc_info() -> tuple[type[S3ArchiverError], S3ArchiverError, TracebackType | None]:
+    try:
+        raise S3ArchiverError("boom")
+    except S3ArchiverError as exc:
+        return (S3ArchiverError, exc, exc.__traceback__)
