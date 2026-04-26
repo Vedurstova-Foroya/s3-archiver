@@ -54,7 +54,7 @@ def compose_env() -> dict[str, str]:
     return env
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture()
 def localstack_service(compose_env: dict[str, str]) -> Generator[None, None, None]:
     _ = _run_compose(compose_env, "down", "-v", "--remove-orphans", check=False)
     try:
@@ -92,7 +92,7 @@ def _run_compose(
             return result
         if not check:
             return result
-        if attempt == retries or _is_non_retryable_compose_error(result):
+        if attempt == retries or _is_non_retryable_compose_error(args, result):
             raise subprocess.CalledProcessError(
                 result.returncode,
                 command,
@@ -163,6 +163,11 @@ def _bucket_is_ready(settings: AppSettings) -> bool:
     return True
 
 
-def _is_non_retryable_compose_error(result: subprocess.CompletedProcess[str]) -> bool:
+def _is_non_retryable_compose_error(
+    args: tuple[str, ...],
+    result: subprocess.CompletedProcess[str],
+) -> bool:
+    if args and args[0] == "up":
+        return False
     retryable_messages = ("No such container", "marked for removal")
     return not any(message in result.stderr for message in retryable_messages)
