@@ -24,6 +24,7 @@ class S3AddressingStyle(StrEnum):
     VIRTUAL = "virtual"
 
 
+_VALID_PROVIDERS = frozenset({provider.value for provider in S3Provider})
 _VALID_ADDRESSING_STYLES = frozenset({style.value for style in S3AddressingStyle})
 _VALID_LOG_LEVELS = frozenset({"CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG"})
 
@@ -48,12 +49,16 @@ class AppSettings:
     def from_env(cls, env: Mapping[str, str]) -> AppSettings:
         """Build validated settings from environment variables."""
 
-        provider = S3Provider(_require(env, "S3_PROVIDER").lower())
+        provider_value = _require(env, "S3_PROVIDER").lower()
         addressing_style_value = env.get("S3_ADDRESSING_STYLE", "path").lower()
         log_level = env.get("LOG_LEVEL", "INFO").upper()
         namespace = _optional(env, "S3_NAMESPACE")
         iam_user_ocid = _optional(env, "OCI_IAM_USER_OCID")
 
+        if provider_value not in _VALID_PROVIDERS:
+            raise ConfigError(
+                f"S3_PROVIDER must be one of {_VALID_PROVIDERS}, got {provider_value!r}"
+            )
         if addressing_style_value not in _VALID_ADDRESSING_STYLES:
             message = "S3_ADDRESSING_STYLE must be one of " + (
                 f"{_VALID_ADDRESSING_STYLES}, got {addressing_style_value!r}"
@@ -61,6 +66,7 @@ class AppSettings:
             raise ConfigError(message)
         if log_level not in _VALID_LOG_LEVELS:
             raise ConfigError(f"LOG_LEVEL must be one of {_VALID_LOG_LEVELS}, got {log_level!r}")
+        provider = S3Provider(provider_value)
         if provider is S3Provider.OCI and namespace is None:
             raise ConfigError("S3_NAMESPACE is required when S3_PROVIDER=oci")
         if provider is S3Provider.OCI and iam_user_ocid is None:

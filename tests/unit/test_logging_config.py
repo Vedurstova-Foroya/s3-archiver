@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
 from types import TracebackType
+from typing import cast
 
 import pytest
 from s3_archiver_core.errors import LoggingError, S3ArchiverError
@@ -19,12 +21,19 @@ def test_configure_logging_creates_file_and_handlers(base_env: dict[str, str]) -
 
     log_file = configure_logging(settings)
     logger = logging.getLogger("s3_archiver.test")
-    _ = logger.info("hello world", extra={"event": "unit.log"})
+    _ = logger.info("hello world", extra={"event": "unit.log", "bucket": settings.bucket})
 
     assert log_file.exists()
-    assert '"message": "hello world"' in log_file.read_text(encoding="utf-8")
+    payload = _log_records(log_file)[-1]
+    assert payload["message"] == "hello world"
+    assert payload["event"] == "unit.log"
+    assert payload["bucket"] == settings.bucket
     handlers = logging.getLogger("s3_archiver").handlers
-    assert any(isinstance(handler, TimedRotatingFileHandler) for handler in handlers)
+    file_handler = next(
+        handler for handler in handlers if isinstance(handler, TimedRotatingFileHandler)
+    )
+    assert file_handler.backupCount == 30
+    assert file_handler.when == "MIDNIGHT"
     for handler in logging.getLogger("s3_archiver").handlers:
         handler.close()
 
@@ -58,8 +67,30 @@ def test_json_log_formatter_includes_exception_details() -> None:
 
     rendered = formatter.format(record)
 
-    assert '"message": "boom"' in rendered
-    assert '"exception":' in rendered
+    payload = cast(dict[str, object], json.loads(rendered))
+    assert payload["message"] == "boom"
+    assert payload["exception"] is not None
+
+
+@pytest.mark.unit()
+def test_json_log_formatter_includes_structured_context() -> None:
+    formatter = JsonLogFormatter()
+    record = logging.getLogger("s3_archiver.test").makeRecord(
+        name="s3_archiver.test",
+        level=logging.INFO,
+        fn=__file__,
+        lno=1,
+        msg="context",
+        args=(),
+        exc_info=None,
+        extra={"event": "unit.context", "bucket": "archive-bucket", "attempt": 2},
+    )
+
+    payload = cast(dict[str, object], json.loads(formatter.format(record)))
+
+    assert payload["event"] == "unit.context"
+    assert payload["bucket"] == "archive-bucket"
+    assert payload["attempt"] == 2
 
 
 def _exc_info() -> tuple[type[S3ArchiverError], S3ArchiverError, TracebackType | None]:
@@ -67,3 +98,10 @@ def _exc_info() -> tuple[type[S3ArchiverError], S3ArchiverError, TracebackType |
         raise S3ArchiverError("boom")
     except S3ArchiverError as exc:
         return (S3ArchiverError, exc, exc.__traceback__)
+
+
+def _log_records(log_file: Path) -> list[dict[str, object]]:
+    return [
+        cast(dict[str, object], json.loads(line))
+        for line in log_file.read_text(encoding="utf-8").splitlines()
+    ]

@@ -61,6 +61,7 @@ dependencies = [
     { name = "botocore-stubs" },
     { name = "types-s3transfer" },
 ]
+sdist = { url = "https://files.pythonhosted.org/packages/7f/63/5f2df9203c62b01f1f8f513f1887568ff76b9675a76e3bf394583aec7e91/boto3_stubs-1.42.86.tar.gz", hash = "sha256:85fc12337f70523e25f30885b80feeecf8623977aba53f7672bd37a5674718a3", size = 102517, upload-time = "2026-04-09T01:15:51.784Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/fd/75/c2c48e13c1cd8827fffd54e693505723bd278de5c7ea6e5baf5f867c25da/boto3_stubs-1.42.86-py3-none-any.whl", hash = "sha256:9f2f4de654e47a1826a86ade7bf4ef7f6277eacbdf3a6a45903b3df535d8a789", size = 70606, upload-time = "2026-04-09T01:15:46.399Z" },
 ]
@@ -762,6 +763,16 @@ version = "0.1.0"
 source = { virtual = "." }
 
 [package.dev-dependencies]
+dev = [
+    { name = "basedpyright" },
+    { name = "boto3-stubs", extra = ["s3"] },
+    { name = "commitizen" },
+    { name = "pre-commit" },
+    { name = "pyright" },
+    { name = "pytest" },
+    { name = "pytest-cov" },
+    { name = "ruff" },
+]
 lint = [
     { name = "basedpyright" },
     { name = "ruff" },
@@ -782,6 +793,16 @@ typecheck = [
 [package.metadata]
 
 [package.metadata.requires-dev]
+dev = [
+    { name = "basedpyright", specifier = ">=1.31.3" },
+    { name = "boto3-stubs", extras = ["s3"], specifier = ">=1.40.53" },
+    { name = "commitizen", specifier = ">=4.9.1" },
+    { name = "pre-commit", specifier = ">=4.3.0" },
+    { name = "pyright", specifier = ">=1.1.405" },
+    { name = "pytest", specifier = ">=8.4.2" },
+    { name = "pytest-cov", specifier = ">=7.0.0" },
+    { name = "ruff", specifier = ">=0.12.11" },
+]
 lint = [
     { name = "basedpyright", specifier = ">=1.31.3" },
     { name = "ruff", specifier = ">=0.12.11" },

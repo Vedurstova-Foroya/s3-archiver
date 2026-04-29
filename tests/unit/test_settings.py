@@ -26,6 +26,14 @@ def test_from_env_rejects_invalid_log_level(base_env: dict[str, str]) -> None:
 
 
 @pytest.mark.unit()
+def test_from_env_rejects_invalid_provider(base_env: dict[str, str]) -> None:
+    base_env["S3_PROVIDER"] = "broken"
+
+    with pytest.raises(ConfigError, match="S3_PROVIDER"):
+        _ = AppSettings.from_env(base_env)
+
+
+@pytest.mark.unit()
 def test_localstack_defaults_without_namespace(base_env: dict[str, str]) -> None:
     base_env["S3_PROVIDER"] = "localstack"
     _ = base_env.pop("S3_NAMESPACE")

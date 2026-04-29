@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
+from typing import cast
 
 import pytest
 from s3_archiver_core.health import run_health_check
@@ -37,6 +39,18 @@ def test_health_check_succeeds_against_localstack(tmp_path: Path, localstack_ser
 
     assert report.status == "ok"
     assert log_file.exists()
+    assert log_file.name == "s3-archiver.log"
+    records = _log_records(log_file)
+    assert any(
+        record.get("event") == "health.started"
+        and record.get("bucket") == settings.bucket
+        and record.get("endpoint_url") == settings.resolved_endpoint_url()
+        for record in records
+    )
+    assert any(
+        record.get("event") == "health.succeeded" and record.get("bucket") == settings.bucket
+        for record in records
+    )
 
 
 @pytest.mark.integration()
@@ -52,3 +66,10 @@ def test_s3_client_supports_object_round_trip(tmp_path: Path, localstack_service
     payload = response["Body"].read()
 
     assert payload == body
+
+
+def _log_records(log_file: Path) -> list[dict[str, object]]:
+    return [
+        cast(dict[str, object], json.loads(line))
+        for line in log_file.read_text(encoding="utf-8").splitlines()
+    ]

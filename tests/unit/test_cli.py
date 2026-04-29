@@ -70,6 +70,22 @@ def test_check_command_uses_config_exit_code(monkeypatch: pytest.MonkeyPatch) ->
 
 
 @pytest.mark.unit()
+def test_check_command_uses_config_exit_code_for_invalid_provider(
+    monkeypatch: pytest.MonkeyPatch,
+    base_env: dict[str, str],
+) -> None:
+    base_env["S3_PROVIDER"] = "broken"
+    monkeypatch.setattr(os, "environ", base_env)
+
+    result = RUNNER.invoke(cli_module.app, ["check"])
+
+    assert result.exit_code == cli_module.CONFIG_ERROR_EXIT_CODE
+    payload = _load_payload(result.stderr)
+    assert payload["status"] == "error"
+    assert "S3_PROVIDER" in payload["message"]
+
+
+@pytest.mark.unit()
 def test_check_command_uses_logging_exit_code(
     monkeypatch: pytest.MonkeyPatch,
     base_env: dict[str, str],

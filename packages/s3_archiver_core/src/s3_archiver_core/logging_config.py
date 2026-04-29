@@ -9,10 +9,12 @@ from datetime import UTC, datetime
 from logging import LogRecord
 from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
-from typing import override
+from typing import cast, override
 
 from s3_archiver_core.errors import LoggingError
 from s3_archiver_core.settings import AppSettings
+
+_RESERVED_LOG_RECORD_FIELDS = frozenset(logging.makeLogRecord({}).__dict__)
 
 
 class JsonLogFormatter(logging.Formatter):
@@ -20,15 +22,14 @@ class JsonLogFormatter(logging.Formatter):
 
     @override
     def format(self, record: LogRecord) -> str:
-        payload = {
+        payload: dict[str, str | int | float | bool | None] = {
             "timestamp": datetime.fromtimestamp(record.created, tz=UTC).isoformat(),
             "level": record.levelname,
             "logger": record.name,
             "message": record.getMessage(),
         }
-        event = record.__dict__.get("event")
-        if isinstance(event, str):
-            payload["event"] = event
+        for key, value in _context_fields(record).items():
+            payload[key] = value
         if record.exc_info is not None:
             payload["exception"] = self.formatException(record.exc_info)
         return json.dumps(payload, sort_keys=True)
@@ -76,3 +77,13 @@ def _coerce_level(log_level: str) -> int:
         "INFO": logging.INFO,
         "DEBUG": logging.DEBUG,
     }[log_level]
+
+
+def _context_fields(record: LogRecord) -> dict[str, str | int | float | bool | None]:
+    payload: dict[str, str | int | float | bool | None] = {}
+    for key, value in cast(dict[str, object], record.__dict__).items():
+        if key in _RESERVED_LOG_RECORD_FIELDS:
+            continue
+        if isinstance(value, (str, int, float, bool)) or value is None:
+            payload[key] = value
+    return payload
