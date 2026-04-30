@@ -20,7 +20,7 @@ docker compose run --rm app
 ```
 
 The container runs rootless and writes retained JSON logs to the `app_logs` named volume mounted at `/var/log/s3-archiver` in the container.
-For host-native `uv run ...` development, the example env files default `LOG_DIR` to `.local/logs/s3-archiver` so the CLI can create logs without needing root privileges.
+The checked-in env files default `LOG_DIR` to `/var/log/s3-archiver` to match the runtime contract used by the container image and Compose stack.
 
 ## Local Development
 
@@ -47,6 +47,8 @@ $EDITOR .env
 make run
 ```
 
+If your local user cannot write `/var/log/s3-archiver`, override `LOG_DIR` to a writable path before running the host-native smoke check.
+
 If you want to run against LocalStack instead of OCI credentials:
 
 ```bash
@@ -55,7 +57,7 @@ ENV_FILE=.env.e2e S3_ENDPOINT_URL=http://127.0.0.1:4566 ./scripts/run.sh
 ENV_FILE=.env.e2e S3_ENDPOINT_URL=http://127.0.0.1:4566 make run
 ```
 
-`./scripts/run.sh` is the canonical host-native smoke-test wrapper, and `make run` now just delegates to it. Both honor `ENV_FILE` and inline overrides like `S3_ENDPOINT_URL=...`. Host-native runs write logs under `.local/logs/s3-archiver/`. Docker Compose still overrides `LOG_DIR` inside the container back to `/var/log/s3-archiver` so the named volume behavior is unchanged.
+`./scripts/run.sh` is the canonical host-native smoke-test wrapper, and `make run` delegates to it. The CLI now loads `.env` itself, while the wrapper only selects the env file through `ENV_FILE` or `APP_ENV_FILE`. Inline overrides like `S3_ENDPOINT_URL=...` still win because process env takes precedence over file values. Docker Compose continues to set `/var/log/s3-archiver` inside the container so the named-volume behavior is unchanged.
 
 Run checks:
 
@@ -88,6 +90,7 @@ docker run --rm -v s3-archiver_app_logs:/logs alpine:3.22 cat /logs/s3-archiver.
 - Unit tests cover config validation, logging setup, health checks, CLI behavior, and repo policy guards.
 - Integration tests run against LocalStack S3 and verify bucket access plus object round-trips.
 - E2E tests build and run the compose stack and assert the rootless container can complete `s3-archiver check` and persist logs.
+- GitHub Actions runs the same verification flow on pushes and pull requests.
 
 ## Conventional Commits And Releases
 
