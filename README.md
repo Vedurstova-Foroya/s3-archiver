@@ -69,8 +69,15 @@ uv run python scripts/check_type_coverage.py
 uv run pytest tests/unit -m unit
 ./scripts/run_integration.sh
 ./scripts/run_e2e.sh
+./scripts/run_full_suite.sh
 uv build --package s3-archiver-core
 uv build --package s3-archiver-cli
+```
+
+Run all suites with the canonical coverage-gated command:
+
+```bash
+./scripts/run_full_suite.sh
 ```
 
 ## Logging
@@ -83,6 +90,17 @@ uv build --package s3-archiver-cli
 ```bash
 docker run --rm -v s3-archiver_app_logs:/logs alpine:3.22 ls -lah /logs
 docker run --rm -v s3-archiver_app_logs:/logs alpine:3.22 cat /logs/s3-archiver.log
+```
+
+- Back up the named volume contents to a local archive:
+
+```bash
+mkdir -p .local/log-backups
+docker run --rm \
+  -v s3-archiver_app_logs:/logs \
+  -v "$PWD/.local/log-backups:/backup" \
+  alpine:3.22 \
+  sh -lc 'tar -czf /backup/app_logs.tgz -C /logs .'
 ```
 
 ## Tests
