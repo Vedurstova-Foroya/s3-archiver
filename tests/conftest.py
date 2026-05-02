@@ -27,9 +27,6 @@ class BucketBootstrapClient(Protocol):
     def head_bucket(self, *, Bucket: str) -> object:  # noqa: N803
         ...
 
-    def create_bucket(self, *, Bucket: str) -> object:  # noqa: N803
-        ...
-
 
 @pytest.fixture()
 def base_env(tmp_path: Path) -> dict[str, str]:
@@ -155,11 +152,7 @@ def _bucket_is_ready(settings: AppSettings) -> bool:
     try:
         _ = client.head_bucket(Bucket=settings.bucket)
     except (BotoCoreError, ClientError):
-        try:
-            _ = client.create_bucket(Bucket=settings.bucket)
-            _ = client.head_bucket(Bucket=settings.bucket)
-        except (BotoCoreError, ClientError):
-            return False
+        return False
     return True
 
 

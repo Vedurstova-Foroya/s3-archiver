@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import textwrap
 import time
 from typing import TypedDict, cast
 
@@ -17,6 +18,12 @@ _COMPOSE_RUN_RETRIES = 4
 class ErrorPayload(TypedDict):
     status: str
     message: str
+
+
+class RotationPayload(TypedDict):
+    current_contents: str
+    rotated_contents: str
+    rotated_logs: list[str]
 
 
 @pytest.mark.e2e()
@@ -53,6 +60,62 @@ def test_compose_app_writes_persisted_logs(
     )
 
     assert '"event": "health.succeeded"' in result.stdout
+
+
+@pytest.mark.e2e()
+def test_compose_app_persists_rotated_logs(
+    compose_env: dict[str, str],
+    localstack_service: None,
+) -> None:
+    _ = localstack_service
+    rotation_probe = textwrap.dedent(
+        """
+        /opt/venv/bin/python - <<'PY'
+        import json
+        import logging
+        import os
+        from logging.handlers import TimedRotatingFileHandler
+
+        from s3_archiver_core.logging_config import configure_logging
+        from s3_archiver_core.settings import AppSettings
+
+        settings = AppSettings.from_env(dict(os.environ))
+        log_file = configure_logging(settings)
+        logger = logging.getLogger("s3_archiver.rotation")
+        logger.info("before rollover", extra={"event": "rotation.before"})
+        file_handler = next(
+            handler
+            for handler in logging.getLogger("s3_archiver").handlers
+            if isinstance(handler, TimedRotatingFileHandler)
+        )
+        file_handler.doRollover()
+        logger.info("after rollover", extra={"event": "rotation.after"})
+        rotated_files = sorted(settings.log_dir.glob("s3-archiver.log.*"))
+        if not rotated_files:
+            raise SystemExit("no rotated files created")
+        payload = {
+            "current_contents": log_file.read_text(encoding="utf-8"),
+            "rotated_contents": rotated_files[-1].read_text(encoding="utf-8"),
+            "rotated_logs": [path.name for path in rotated_files],
+        }
+        print(json.dumps(payload, sort_keys=True))
+        PY
+        """
+    ).strip()
+    result = _run_compose(
+        compose_env,
+        "run",
+        "--rm",
+        "app",
+        "sh",
+        "-lc",
+        rotation_probe,
+    )
+    payload = _rotation_payload(result.stdout)
+
+    assert any(name.startswith("s3-archiver.log.") for name in payload["rotated_logs"])
+    assert '"event": "rotation.before"' in payload["rotated_contents"]
+    assert '"event": "rotation.after"' in payload["current_contents"]
 
 
 @pytest.mark.e2e()
@@ -121,3 +184,8 @@ def _is_non_retryable_compose_error(result: subprocess.CompletedProcess[str]) ->
 def _error_payload(output: str) -> ErrorPayload:
     json_line = next(line for line in reversed(output.splitlines()) if line.startswith("{"))
     return cast(ErrorPayload, json.loads(json_line))
+
+
+def _rotation_payload(output: str) -> RotationPayload:
+    json_line = next(line for line in reversed(output.splitlines()) if line.startswith("{"))
+    return cast(RotationPayload, json.loads(json_line))

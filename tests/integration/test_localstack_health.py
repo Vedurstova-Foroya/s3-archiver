@@ -54,6 +54,17 @@ def test_health_check_succeeds_against_localstack(tmp_path: Path, localstack_ser
 
 
 @pytest.mark.integration()
+def test_localstack_ready_hook_creates_bucket(tmp_path: Path, localstack_service: None) -> None:
+    _ = localstack_service
+    settings = AppSettings.from_env(_integration_env(tmp_path))
+    client = build_s3_client(settings)
+
+    response = client.head_bucket(Bucket=settings.bucket)
+
+    assert response is not None
+
+
+@pytest.mark.integration()
 def test_s3_client_supports_object_round_trip(tmp_path: Path, localstack_service: None) -> None:
     _ = localstack_service
     settings = AppSettings.from_env(_integration_env(tmp_path))
