@@ -4,6 +4,10 @@ services:
       context: .
       dockerfile: Dockerfile
       target: runtime
+    depends_on:
+      localstack:
+        condition: service_healthy
+        required: false
     env_file:
       - ${APP_ENV_FILE:-.env}
     environment:

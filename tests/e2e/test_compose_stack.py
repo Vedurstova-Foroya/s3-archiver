@@ -6,6 +6,7 @@ import json
 import subprocess
 import textwrap
 import time
+from pathlib import Path
 from typing import TypedDict, cast
 
 import pytest
@@ -13,6 +14,7 @@ from s3_archiver_cli.main import HEALTH_CHECK_ERROR_EXIT_CODE, LOGGING_ERROR_EXI
 
 _COMPOSE_RETRY_DELAY_SECONDS = 2.0
 _COMPOSE_RUN_RETRIES = 4
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 class ErrorPayload(TypedDict):
@@ -36,6 +38,23 @@ def test_compose_app_healthcheck_succeeds(
     final_line = result.stdout.strip().splitlines()[-1]
 
     assert '"event": "logging.configured"' in result.stdout
+    assert '"event": "health.started"' in result.stdout
+    assert '"event": "health.succeeded"' in result.stdout
+    assert '"status": "ok"' in final_line
+    assert '"bucket": "s3-archiver-integration"' in final_line
+
+
+@pytest.mark.e2e()
+def test_compose_run_starts_localstack_without_pytest_orchestration(
+    compose_env: dict[str, str],
+) -> None:
+    _ = _run_compose(compose_env, "down", "-v", "--remove-orphans", check=False)
+    try:
+        result = _run_compose(compose_env, "run", "--rm", "app")
+    finally:
+        _ = _run_compose(compose_env, "down", "-v", "--remove-orphans", check=False)
+    final_line = result.stdout.strip().splitlines()[-1]
+
     assert '"event": "health.started"' in result.stdout
     assert '"event": "health.succeeded"' in result.stdout
     assert '"status": "ok"' in final_line
@@ -147,6 +166,7 @@ def _run_compose(
     for attempt in range(_COMPOSE_RUN_RETRIES + 1):
         result = subprocess.run(
             command,
+            cwd=REPO_ROOT,
             env=env,
             check=False,
             capture_output=True,

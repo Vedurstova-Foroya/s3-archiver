@@ -29,6 +29,9 @@ def test_configure_logging_creates_file_and_handlers(base_env: dict[str, str]) -
     assert payload["message"] == "hello world"
     assert payload["event"] == "unit.log"
     assert payload["bucket"] == settings.bucket
+    assert payload["correlation_id"] is None
+    assert payload["trace_id"] is None
+    assert payload["span_id"] is None
     handlers = logging.getLogger("s3_archiver").handlers
     file_handler = next(
         handler for handler in handlers if isinstance(handler, TimedRotatingFileHandler)
@@ -118,6 +121,8 @@ def test_json_log_formatter_includes_exception_details() -> None:
 
     payload = cast(dict[str, object], json.loads(rendered))
     assert payload["message"] == "boom"
+    assert payload["event"] == "log"
+    assert payload["correlation_id"] is None
     assert payload["exception"] is not None
 
 
@@ -132,7 +137,14 @@ def test_json_log_formatter_includes_structured_context() -> None:
         msg="context",
         args=(),
         exc_info=None,
-        extra={"event": "unit.context", "bucket": "archive-bucket", "attempt": 2},
+        extra={
+            "event": "unit.context",
+            "bucket": "archive-bucket",
+            "attempt": 2,
+            "correlation_id": "corr-123",
+            "trace_id": "trace-123",
+            "span_id": "span-123",
+        },
     )
 
     payload = cast(dict[str, object], json.loads(formatter.format(record)))
@@ -140,6 +152,9 @@ def test_json_log_formatter_includes_structured_context() -> None:
     assert payload["event"] == "unit.context"
     assert payload["bucket"] == "archive-bucket"
     assert payload["attempt"] == 2
+    assert payload["correlation_id"] == "corr-123"
+    assert payload["trace_id"] == "trace-123"
+    assert payload["span_id"] == "span-123"
 
 
 @pytest.mark.unit()
@@ -159,6 +174,7 @@ def test_json_log_formatter_ignores_unsupported_context_values() -> None:
     payload = cast(dict[str, object], json.loads(formatter.format(record)))
 
     assert payload["event"] == "unit.context"
+    assert payload["correlation_id"] is None
     assert "details" not in payload
 
 

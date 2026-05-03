@@ -6,7 +6,34 @@ requires-python = ">=3.12"
 members = [
     "s3-archiver-cli",
     "s3-archiver-core",
-    "s3-archiver-workspace",
+]
+
+[manifest.dependency-groups]
+dev = [
+    { name = "basedpyright", specifier = ">=1.31.3" },
+    { name = "boto3-stubs", extras = ["s3"], specifier = ">=1.40.53" },
+    { name = "commitizen", specifier = ">=4.9.1" },
+    { name = "pre-commit", specifier = ">=4.3.0" },
+    { name = "pyright", specifier = ">=1.1.405" },
+    { name = "pytest", specifier = ">=8.4.2" },
+    { name = "pytest-cov", specifier = ">=7.0.0" },
+    { name = "ruff", specifier = ">=0.12.11" },
+]
+lint = [
+    { name = "basedpyright", specifier = ">=1.31.3" },
+    { name = "ruff", specifier = ">=0.12.11" },
+]
+release = [
+    { name = "commitizen", specifier = ">=4.9.1" },
+    { name = "pre-commit", specifier = ">=4.3.0" },
+]
+test = [
+    { name = "pytest", specifier = ">=8.4.2" },
+    { name = "pytest-cov", specifier = ">=7.0.0" },
+]
+typecheck = [
+    { name = "boto3-stubs", extras = ["s3"], specifier = ">=1.40.53" },
+    { name = "pyright", specifier = ">=1.1.405" },
 ]
 
 [[package]]
@@ -756,69 +783,6 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [{ name = "boto3", specifier = ">=1.40.53" }]
-
-[[package]]
-name = "s3-archiver-workspace"
-version = "0.1.0"
-source = { virtual = "." }
-
-[package.dev-dependencies]
-dev = [
-    { name = "basedpyright" },
-    { name = "boto3-stubs", extra = ["s3"] },
-    { name = "commitizen" },
-    { name = "pre-commit" },
-    { name = "pyright" },
-    { name = "pytest" },
-    { name = "pytest-cov" },
-    { name = "ruff" },
-]
-lint = [
-    { name = "basedpyright" },
-    { name = "ruff" },
-]
-release = [
-    { name = "commitizen" },
-    { name = "pre-commit" },
-]
-test = [
-    { name = "pytest" },
-    { name = "pytest-cov" },
-]
-typecheck = [
-    { name = "boto3-stubs", extra = ["s3"] },
-    { name = "pyright" },
-]
-
-[package.metadata]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "basedpyright", specifier = ">=1.31.3" },
-    { name = "boto3-stubs", extras = ["s3"], specifier = ">=1.40.53" },
-    { name = "commitizen", specifier = ">=4.9.1" },
-    { name = "pre-commit", specifier = ">=4.3.0" },
-    { name = "pyright", specifier = ">=1.1.405" },
-    { name = "pytest", specifier = ">=8.4.2" },
-    { name = "pytest-cov", specifier = ">=7.0.0" },
-    { name = "ruff", specifier = ">=0.12.11" },
-]
-lint = [
-    { name = "basedpyright", specifier = ">=1.31.3" },
-    { name = "ruff", specifier = ">=0.12.11" },
-]
-release = [
-    { name = "commitizen", specifier = ">=4.9.1" },
-    { name = "pre-commit", specifier = ">=4.3.0" },
-]
-test = [
-    { name = "pytest", specifier = ">=8.4.2" },
-    { name = "pytest-cov", specifier = ">=7.0.0" },
-]
-typecheck = [
-    { name = "boto3-stubs", extras = ["s3"], specifier = ">=1.40.53" },
-    { name = "pyright", specifier = ">=1.1.405" },
-]
 
 [[package]]
 name = "s3transfer"

@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
+import re
+from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
 from typing import cast
 
@@ -16,6 +19,7 @@ from s3_archiver_core.settings import AppSettings
 
 def _integration_env(tmp_path: Path) -> dict[str, str]:
     endpoint = os.environ.get("LOCALSTACK_S3_URL", "http://127.0.0.1:4566")
+    runtime_log_dir = tmp_path / "var" / "log" / "s3-archiver"
     return {
         "S3_PROVIDER": "localstack",
         "S3_ACCESS_KEY_ID": "test",
@@ -25,7 +29,7 @@ def _integration_env(tmp_path: Path) -> dict[str, str]:
         "S3_ENDPOINT_URL": endpoint,
         "S3_ADDRESSING_STYLE": "path",
         "LOG_LEVEL": "INFO",
-        "LOG_DIR": str(tmp_path / "logs"),
+        "LOG_DIR": str(runtime_log_dir),
     }
 
 
@@ -34,23 +38,42 @@ def test_health_check_succeeds_against_localstack(tmp_path: Path, localstack_ser
     _ = localstack_service
     settings = AppSettings.from_env(_integration_env(tmp_path))
     log_file = configure_logging(settings)
+    logger = logging.getLogger("s3_archiver.integration")
+    try:
+        report = run_health_check(settings, log_file)
 
-    report = run_health_check(settings, log_file)
+        assert report.status == "ok"
+        assert log_file == settings.log_dir / "s3-archiver.log"
+        assert log_file.exists()
+        records = _log_records(log_file)
+        assert any(
+            record.get("event") == "health.started"
+            and record.get("bucket") == settings.bucket
+            and record.get("endpoint_url") == settings.resolved_endpoint_url()
+            for record in records
+        )
+        assert any(
+            record.get("event") == "health.succeeded" and record.get("bucket") == settings.bucket
+            for record in records
+        )
+        file_handler = next(
+            handler
+            for handler in logging.getLogger("s3_archiver").handlers
+            if isinstance(handler, TimedRotatingFileHandler)
+        )
+        file_handler.doRollover()
+        _ = logger.info("after rollover", extra={"event": "integration.after-rollover"})
 
-    assert report.status == "ok"
-    assert log_file.exists()
-    assert log_file.name == "s3-archiver.log"
-    records = _log_records(log_file)
-    assert any(
-        record.get("event") == "health.started"
-        and record.get("bucket") == settings.bucket
-        and record.get("endpoint_url") == settings.resolved_endpoint_url()
-        for record in records
-    )
-    assert any(
-        record.get("event") == "health.succeeded" and record.get("bucket") == settings.bucket
-        for record in records
-    )
+        rotated_files = sorted(settings.log_dir.glob("s3-archiver.log.*"))
+
+        assert len(rotated_files) == 1
+        assert (
+            re.fullmatch(r"s3-archiver\.log\.\d{4}-\d{2}-\d{2}", rotated_files[0].name) is not None
+        )
+        assert '"event": "health.succeeded"' in rotated_files[0].read_text(encoding="utf-8")
+        assert '"event": "integration.after-rollover"' in log_file.read_text(encoding="utf-8")
+    finally:
+        _close_logging_handlers()
 
 
 @pytest.mark.integration()
@@ -84,3 +107,8 @@ def _log_records(log_file: Path) -> list[dict[str, object]]:
         cast(dict[str, object], json.loads(line))
         for line in log_file.read_text(encoding="utf-8").splitlines()
     ]
+
+
+def _close_logging_handlers() -> None:
+    for handler in logging.getLogger("s3_archiver").handlers:
+        handler.close()
