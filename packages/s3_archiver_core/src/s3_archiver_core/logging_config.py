@@ -24,6 +24,8 @@ class JsonLogFormatter(logging.Formatter):
 
     @override
     def format(self, record: LogRecord) -> str:
+        """Serialize a log record to the stable JSON payload."""
+
         payload: dict[str, str | int | float | bool | None] = {
             "timestamp": datetime.fromtimestamp(record.created, tz=UTC).isoformat(),
             "level": record.levelname,

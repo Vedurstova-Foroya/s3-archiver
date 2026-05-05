@@ -30,6 +30,10 @@ else:
             """Fetch an object from S3."""
             ...
 
+        def list_objects_v2(self, *, Bucket: str, Prefix: str) -> Mapping[str, object]:  # noqa: N803
+            """List objects in a bucket."""
+            ...
+
 
 class S3ClientFactory(Protocol):
     """Typed callable wrapper around the boto3 client factory boundary."""
