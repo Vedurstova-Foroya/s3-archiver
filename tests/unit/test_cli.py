@@ -107,7 +107,7 @@ def test_check_command_uses_logging_exit_code(
 
 
 @pytest.mark.unit()
-def test_check_command_uses_health_exit_code(
+def test_check_command_uses_health_exit_code_for_auth_failure(
     monkeypatch: pytest.MonkeyPatch,
     base_env: dict[str, str],
 ) -> None:
@@ -117,7 +117,7 @@ def test_check_command_uses_health_exit_code(
         return Path("/tmp/s3-archiver.log")
 
     def raise_error(_: AppSettings, _log_file: Path) -> HealthReport:
-        raise HealthCheckError("bucket unavailable")
+        raise HealthCheckError("auth failed: denied")
 
     monkeypatch.setattr(cli_module, "configure_logging", configure)
     monkeypatch.setattr(cli_module, "run_health_check", raise_error)
@@ -127,7 +127,31 @@ def test_check_command_uses_health_exit_code(
     assert result.exit_code == cli_module.HEALTH_CHECK_ERROR_EXIT_CODE
     payload = _load_payload(result.stderr)
     assert payload["status"] == "error"
-    assert payload["message"] == "bucket unavailable"
+    assert payload["message"] == "auth failed: denied"
+
+
+@pytest.mark.unit()
+def test_check_command_uses_health_exit_code_for_connectivity_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    base_env: dict[str, str],
+) -> None:
+    monkeypatch.setattr(os, "environ", base_env)
+
+    def configure(_: AppSettings) -> Path:
+        return Path("/tmp/s3-archiver.log")
+
+    def raise_error(_: AppSettings, _log_file: Path) -> HealthReport:
+        raise HealthCheckError("connectivity failed: endpoint unavailable")
+
+    monkeypatch.setattr(cli_module, "configure_logging", configure)
+    monkeypatch.setattr(cli_module, "run_health_check", raise_error)
+
+    result = RUNNER.invoke(cli_module.app, ["check"])
+
+    assert result.exit_code == cli_module.HEALTH_CHECK_ERROR_EXIT_CODE
+    payload = _load_payload(result.stderr)
+    assert payload["status"] == "error"
+    assert payload["message"] == "connectivity failed: endpoint unavailable"
 
 
 @pytest.mark.unit()
