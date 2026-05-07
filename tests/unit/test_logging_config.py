@@ -5,10 +5,11 @@ from __future__ import annotations
 import json
 import logging
 import re
+import sys
 from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
 from types import TracebackType
-from typing import cast
+from typing import TextIO, cast
 
 import pytest
 from s3_archiver_core.errors import LoggingError, S3ArchiverError
@@ -17,14 +18,40 @@ from s3_archiver_core.settings import AppSettings
 
 
 @pytest.mark.unit()
-def test_configure_logging_creates_file_and_handlers(base_env: dict[str, str]) -> None:
+def test_configure_logging_adds_stdout_and_file_handlers(
+    base_env: dict[str, str],
+) -> None:
     settings = AppSettings.from_env(base_env)
 
     log_file = configure_logging(settings)
+    handlers = logging.getLogger("s3_archiver").handlers
+    stdout_handler: logging.StreamHandler[TextIO] | None = None
+    for handler in handlers:
+        if isinstance(handler, logging.StreamHandler) and not isinstance(
+            handler, TimedRotatingFileHandler
+        ):
+            stdout_handler = cast(logging.StreamHandler[TextIO], handler)
+            break
+    file_handlers = [
+        handler for handler in handlers if isinstance(handler, TimedRotatingFileHandler)
+    ]
     logger = logging.getLogger("s3_archiver.test")
     _ = logger.info("hello world", extra={"event": "unit.log", "bucket": settings.bucket})
 
     assert log_file.exists()
+    assert (
+        sum(
+            1
+            for handler in handlers
+            if isinstance(handler, logging.StreamHandler)
+            and not isinstance(handler, TimedRotatingFileHandler)
+        )
+        == 1
+    )
+    assert stdout_handler is not None
+    assert stdout_handler.stream is sys.stdout
+    assert isinstance(stdout_handler.formatter, JsonLogFormatter)
+    assert len(file_handlers) == 1
     payload = _log_records(log_file)[-1]
     assert payload["message"] == "hello world"
     assert payload["event"] == "unit.log"
@@ -32,14 +59,35 @@ def test_configure_logging_creates_file_and_handlers(base_env: dict[str, str]) -
     assert payload["correlation_id"] is None
     assert payload["trace_id"] is None
     assert payload["span_id"] is None
-    handlers = logging.getLogger("s3_archiver").handlers
-    file_handler = next(
-        handler for handler in handlers if isinstance(handler, TimedRotatingFileHandler)
-    )
+    file_handler = file_handlers[0]
+    assert isinstance(file_handler.formatter, JsonLogFormatter)
     assert file_handler.backupCount == 30
     assert file_handler.when == "MIDNIGHT"
-    for handler in logging.getLogger("s3_archiver").handlers:
-        handler.close()
+    _close_logging_handlers()
+
+
+@pytest.mark.unit()
+def test_configure_logging_applies_shared_log_level_filter_to_stdout_and_file(
+    capsys: pytest.CaptureFixture[str],
+    base_env: dict[str, str],
+) -> None:
+    base_env["LOG_LEVEL"] = "WARNING"
+    settings = AppSettings.from_env(base_env)
+
+    log_file = configure_logging(settings)
+    configured_logger = logging.getLogger("s3_archiver")
+    logger = logging.getLogger("s3_archiver.test")
+    _ = logger.info("ignore me", extra={"event": "unit.filtered"})
+    _ = logger.warning("keep me", extra={"event": "unit.kept"})
+    captured = capsys.readouterr()
+
+    assert configured_logger.level == logging.WARNING
+    assert {handler.level for handler in configured_logger.handlers} == {logging.NOTSET}
+    stdout_records = _parse_log_lines(captured.out)
+    file_records = _log_records(log_file)
+    assert [record["event"] for record in stdout_records] == ["unit.kept"]
+    assert [record["event"] for record in file_records] == ["unit.kept"]
+    _close_logging_handlers()
 
 
 @pytest.mark.unit()
@@ -99,8 +147,7 @@ def test_configure_logging_keeps_only_latest_backup_count(base_env: dict[str, st
         "s3-archiver.log.2026-01-01",
         "s3-archiver.log.2026-01-02",
     ]
-    for handler in logging.getLogger("s3_archiver").handlers:
-        handler.close()
+    _close_logging_handlers()
 
 
 @pytest.mark.unit()
@@ -186,7 +233,17 @@ def _exc_info() -> tuple[type[S3ArchiverError], S3ArchiverError, TracebackType |
 
 
 def _log_records(log_file: Path) -> list[dict[str, object]]:
+    return _parse_log_lines(log_file.read_text(encoding="utf-8"))
+
+
+def _parse_log_lines(log_lines: str) -> list[dict[str, object]]:
     return [
-        cast(dict[str, object], json.loads(line))
-        for line in log_file.read_text(encoding="utf-8").splitlines()
+        cast(dict[str, object], json.loads(line)) for line in log_lines.splitlines() if line != ""
     ]
+
+
+def _close_logging_handlers() -> None:
+    logger = logging.getLogger("s3_archiver")
+    for handler in logger.handlers:
+        handler.close()
+    logger.handlers.clear()

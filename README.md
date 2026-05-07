@@ -10,39 +10,41 @@ Strictly typed Python `uv` monorepo for an S3 archiver bootstrap, with OCI S3-co
 
 ## Quickstart
 
-Copy and paste this on a Docker Compose host after cloning the repo:
-
-```bash
-cp .env.example .env
-$EDITOR .env
-docker compose build app
-docker compose run --rm app
-```
-
-The container runs rootless and writes retained JSON logs to the `app_logs` named volume mounted at `/var/log/s3-archiver` in the container.
-The checked-in env files default `LOG_DIR` to `/var/log/s3-archiver` to match the runtime contract used by the container image and Compose stack.
-
-## Local Development
-
-Install `uv` once:
+Install `uv` once and sync the workspace after cloning the repo:
 
 ```bash
 curl -LsSf https://astral.sh/uv/install.sh | sh
-```
-
-Bootstrap the workspace:
-
-```bash
 uv python install 3.12
 uv sync --all-packages --all-groups
 uv run pre-commit install --install-hooks --hook-type commit-msg --hook-type pre-push
 ```
 
-Run the host-native smoke check:
+Run the canonical compose-backed health check flow:
+
+```bash
+docker compose build app
+docker compose --profile test up -d localstack
+APP_ENV_FILE=.env.e2e docker compose --profile test run --rm app s3-archiver check
+docker compose --profile test down -v
+```
+
+The container runs rootless and writes retained JSON logs to the `app_logs` named volume mounted at `/var/log/s3-archiver` in the container.
+The checked-in env files default `LOG_DIR` to `/var/log/s3-archiver` to match the runtime contract used by the container image and Compose stack.
+
+Use `.env.example` for OCI-backed runs and `.env.e2e` for the LocalStack compose flow shown above.
+
+## Local Development
+
+For host-native OCI smoke checks, create a local env file first:
 
 ```bash
 cp .env.example .env
 $EDITOR .env
+```
+
+Run the host-native smoke check:
+
+```bash
 ./scripts/run.sh
 make run
 ```
@@ -58,6 +60,13 @@ ENV_FILE=.env.e2e S3_ENDPOINT_URL=http://127.0.0.1:4566 make run
 ```
 
 `./scripts/run.sh` is the canonical host-native smoke-test wrapper, and `make run` delegates to it. The CLI now loads `.env` itself, while the wrapper only selects the env file through `ENV_FILE` or `APP_ENV_FILE`. Inline overrides like `S3_ENDPOINT_URL=...` still win because process env takes precedence over file values. Docker Compose continues to set `/var/log/s3-archiver` inside the container so the named-volume behavior is unchanged.
+
+Run the health check directly without the wrapper:
+
+```bash
+uv run s3-archiver check
+ENV_FILE=.env.e2e S3_ENDPOINT_URL=http://127.0.0.1:4566 uv run s3-archiver check
+```
 
 Run checks:
 
