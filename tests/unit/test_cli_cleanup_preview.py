@@ -96,8 +96,8 @@ def test_run_cleanup_preview_writes_manifest_file_and_ignores_disabled_cleanup(
 
         def list_source_objects(self, _versioning_state: str) -> Iterable[object]:
             return (
-                _listed("archive/old.txt", 61),
-                _listed("archive/recent.txt", 59),
+                _listed("archive/2024-02-20T00-00-00.txt", 61),
+                _listed("archive/2024-02-21T00-00-00.txt", 59),
             )
 
     monkeypatch.setattr(preview_module, "run_health_check", _ok_health_check)
@@ -112,6 +112,7 @@ def test_run_cleanup_preview_writes_manifest_file_and_ignores_disabled_cleanup(
 
     preview = cast(dict[str, object], payload["cleanup_preview"])
     entries = cast(list[dict[str, object]], preview["entries"])
+    archive_groups = cast(list[dict[str, object]], preview["archive_groups"])
     manifest_path = Path(cast(str, preview["manifest_file"]))
 
     assert preview["cleanup_enabled_in_settings"] is False
@@ -119,13 +120,14 @@ def test_run_cleanup_preview_writes_manifest_file_and_ignores_disabled_cleanup(
     assert entries == [
         {
             "etag": '"etag"',
-            "key": "archive/old.txt",
+            "key": "archive/2024-02-20T00-00-00.txt",
             "last_modified_utc": "2024-02-19T00:00:00+00:00",
             "size": 10,
             "source_bucket": settings.source.bucket,
             "version_id": "v1",
         }
     ]
+    assert archive_groups[0]["cleanup_status"] == "skipped"
     assert manifest_path.exists()
     written = cast(dict[str, object], json.loads(manifest_path.read_text(encoding="utf-8")))
     written_preview = cast(dict[str, object], written["cleanup_preview"])

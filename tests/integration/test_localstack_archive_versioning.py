@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-import json
 from collections.abc import Mapping
 from pathlib import Path
-from typing import TypedDict, cast
+from typing import cast
 
 import pytest
 from mypy_boto3_s3.type_defs import VersioningConfigurationTypeDef
@@ -20,11 +19,10 @@ from tests.integration.localstack_object_helpers import (
     listed_keys,
     put_test_object,
     read_object_text,
+    read_tar_gz_members_text,
 )
 
-
-class SourceFingerprintPayload(TypedDict):
-    source_version_id: str | None
+TARGET_DAY = "2099-12-31"
 
 
 @pytest.mark.integration()
@@ -41,7 +39,8 @@ def test_archive_command_cleans_up_exact_latest_version_only(
         Bucket=localstack_bucket_pair.source,
         VersioningConfiguration={"Status": "Enabled"},
     )
-    key = "versioned/history.txt"
+    key = f"versioned/{TARGET_DAY}T00-00-00-history.txt"
+    archive_key = f"versioned/{TARGET_DAY}.tar.gz"
     first = put_test_object(source_client, localstack_bucket_pair.source, key, body=b"first\n")
     second = put_test_object(source_client, localstack_bucket_pair.source, key, body=b"second\n")
 
@@ -49,9 +48,9 @@ def test_archive_command_cleans_up_exact_latest_version_only(
 
     assert payload["status"] == "ok"
     assert payload["manifest"]["object_count"] == 1
-    assert (
-        read_object_text(destination_client, localstack_bucket_pair.destination, key) == "second\n"
-    )
+    assert read_tar_gz_members_text(
+        destination_client, localstack_bucket_pair.destination, archive_key
+    ) == {key: "second\n"}
     assert read_object_text(source_client, localstack_bucket_pair.source, key) == "first\n"
     versions = listed_key_versions(source_client, localstack_bucket_pair.source, key)
     assert (key, str(first["VersionId"]), True) in versions
@@ -59,12 +58,13 @@ def test_archive_command_cleans_up_exact_latest_version_only(
 
 
 @pytest.mark.integration()
-def test_archive_command_rerun_recovers_archived_source_version_for_exact_cleanup(
+def test_archive_command_rerun_recovers_existing_archive_for_exact_cleanup(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     localstack_bucket_pair: LocalstackBucketPair,
 ) -> None:
-    key = "versioned/rerun.txt"
+    key = f"versioned/{TARGET_DAY}T00-00-00-rerun.txt"
+    archive_key = f"versioned/{TARGET_DAY}.tar.gz"
     first_env = _archive_env(tmp_path, localstack_bucket_pair)
     first_env["ARCHIVER_ENABLE_CLEANUP"] = "false"
     source_client = _client(first_env, "source")
@@ -80,10 +80,9 @@ def test_archive_command_rerun_recovers_archived_source_version_for_exact_cleanu
     first_payload = _run_archive(monkeypatch, first_env)
 
     assert first_payload["status"] == "ok"
-    assert read_object_text(destination_client, localstack_bucket_pair.destination, key) == (
-        "archived-version\n"
-    )
-    live = put_test_object(source_client, localstack_bucket_pair.source, key, body=b"live-now\n")
+    assert read_tar_gz_members_text(
+        destination_client, localstack_bucket_pair.destination, archive_key
+    ) == {key: "archived-version\n"}
     rerun_env = dict(first_env)
     rerun_env["ARCHIVER_ENABLE_CLEANUP"] = "true"
 
@@ -93,21 +92,16 @@ def test_archive_command_rerun_recovers_archived_source_version_for_exact_cleanu
     assert rerun_payload["manifest"]["object_count"] == 1
     destination_metadata = cast(
         dict[str, str],
-        destination_client.head_object(Bucket=localstack_bucket_pair.destination, Key=key)[
+        destination_client.head_object(Bucket=localstack_bucket_pair.destination, Key=archive_key)[
             "Metadata"
         ],
     )
-    fingerprint = cast(
-        SourceFingerprintPayload,
-        json.loads(destination_metadata["s3-archiver-source-fingerprint"]),
-    )
-    assert fingerprint["source_version_id"] == str(archived["VersionId"])
-    assert read_object_text(destination_client, localstack_bucket_pair.destination, key) == (
-        "archived-version\n"
-    )
-    assert read_object_text(source_client, localstack_bucket_pair.source, key) == "live-now\n"
+    assert destination_metadata["s3-archiver-source-count"] == "1"
+    assert read_tar_gz_members_text(
+        destination_client, localstack_bucket_pair.destination, archive_key
+    ) == {key: "archived-version\n"}
+    assert key not in listed_keys(source_client, localstack_bucket_pair.source)
     versions = listed_key_versions(source_client, localstack_bucket_pair.source, key)
-    assert (key, str(live["VersionId"]), True) in versions
     assert all(version_id != str(archived["VersionId"]) for _, version_id, _ in versions)
 
 
@@ -121,7 +115,8 @@ def test_archive_command_cleans_up_pre_versioning_null_version(
     env["ARCHIVER_ENABLE_CLEANUP"] = "true"
     source_client = _client(env, "source")
     destination_client = _client(env, "destination")
-    key = "versioned/null.txt"
+    key = f"versioned/{TARGET_DAY}T00-00-00-null.txt"
+    archive_key = f"versioned/{TARGET_DAY}.tar.gz"
     _ = put_test_object(source_client, localstack_bucket_pair.source, key, body=b"null-current\n")
     enabled: VersioningConfigurationTypeDef = {"Status": "Enabled"}
     _ = source_client.put_bucket_versioning(
@@ -137,21 +132,16 @@ def test_archive_command_cleans_up_pre_versioning_null_version(
     payload = _run_archive(monkeypatch, env, attempts=6)
 
     assert payload["status"] == "ok"
-    assert (
-        read_object_text(destination_client, localstack_bucket_pair.destination, key)
-        == "null-current\n"
-    )
+    assert read_tar_gz_members_text(
+        destination_client, localstack_bucket_pair.destination, archive_key
+    ) == {key: "null-current\n"}
     destination_metadata = cast(
         dict[str, str],
-        destination_client.head_object(Bucket=localstack_bucket_pair.destination, Key=key)[
+        destination_client.head_object(Bucket=localstack_bucket_pair.destination, Key=archive_key)[
             "Metadata"
         ],
     )
-    fingerprint = cast(
-        SourceFingerprintPayload,
-        json.loads(destination_metadata["s3-archiver-source-fingerprint"]),
-    )
-    assert fingerprint["source_version_id"] is None
+    assert destination_metadata["s3-archiver-source-count"] == "1"
     assert key not in listed_keys(source_client, localstack_bucket_pair.source)
     versions = listed_key_versions(source_client, localstack_bucket_pair.source, key)
     assert versions == [(key, "null", False)]
@@ -167,7 +157,8 @@ def test_archive_command_handles_suspended_version_history_current_null_version(
     env["ARCHIVER_ENABLE_CLEANUP"] = "true"
     source_client = _client(env, "source")
     destination_client = _client(env, "destination")
-    key = "versioned/suspended-null.txt"
+    key = f"versioned/{TARGET_DAY}T00-00-00-suspended-null.txt"
+    archive_key = f"versioned/{TARGET_DAY}.tar.gz"
     _ = source_client.put_bucket_versioning(
         Bucket=localstack_bucket_pair.source,
         VersioningConfiguration={"Status": "Enabled"},
@@ -193,21 +184,16 @@ def test_archive_command_handles_suspended_version_history_current_null_version(
 
     assert payload["status"] == "ok"
     assert current.get("VersionId") in {None, "null"}
-    assert (
-        read_object_text(destination_client, localstack_bucket_pair.destination, key)
-        == "suspended-current\n"
-    )
+    assert read_tar_gz_members_text(
+        destination_client, localstack_bucket_pair.destination, archive_key
+    ) == {key: "suspended-current\n"}
     destination_metadata = cast(
         dict[str, str],
-        destination_client.head_object(Bucket=localstack_bucket_pair.destination, Key=key)[
+        destination_client.head_object(Bucket=localstack_bucket_pair.destination, Key=archive_key)[
             "Metadata"
         ],
     )
-    fingerprint = cast(
-        SourceFingerprintPayload,
-        json.loads(destination_metadata["s3-archiver-source-fingerprint"]),
-    )
-    assert fingerprint["source_version_id"] is None
+    assert destination_metadata["s3-archiver-source-count"] == "1"
     assert key not in listed_keys(source_client, localstack_bucket_pair.source)
     versions = listed_key_versions(source_client, localstack_bucket_pair.source, key)
     assert all(version_id != str(current.get("VersionId")) for _, version_id, _ in versions)

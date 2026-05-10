@@ -6,13 +6,14 @@ import json
 import logging
 import time
 from collections.abc import Callable, Mapping
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, NoReturn
 from uuid import uuid4
 
 import typer
-from s3_archiver_core.archive import ArchiveRunResult, run_archive
+from s3_archiver_core.archive import run_archive
 from s3_archiver_core.archive_lock import FileArchiveRunLock
 from s3_archiver_core.archive_manifest import ManifestEntry
 from s3_archiver_core.archive_options import ArchiveOptions
@@ -33,10 +34,10 @@ from s3_archiver_core.temp_files import prepare_runtime_temp_dir
 from s3_archiver_cli import archive_run_records as _run_records
 from s3_archiver_cli import error_logging as _error_logging
 from s3_archiver_cli import scheduled_archive as _scheduled_archive
+from s3_archiver_cli import visual_demo_command as _visual_demo_command
 from s3_archiver_cli.archive_lock_reporting import log_lock_recovery as _log_lock_recovery
 from s3_archiver_cli.cleanup_preview import run_cleanup_preview as _run_cleanup_preview
 from s3_archiver_cli.env import load_runtime_env as _load_runtime_env
-from s3_archiver_cli.visual_demo import run_visual_demo as _run_visual_demo
 
 type JsonScalar = str | int | float | bool | None
 type JsonValue = JsonScalar | dict[str, "JsonValue"] | list["JsonValue"]
@@ -112,18 +113,23 @@ def cleanup_preview() -> None:
 @app.command()
 def demo() -> None:
     """Run a human-readable archive walkthrough backed by real S3 state."""
+    _run_visual_demo_command(perform_cleanup=False)
 
-    payload = _run_payload_command(
-        lambda settings, log_file: _run_visual_demo(
-            settings,
-            log_file,
-            archive_runner=_run_archive,
-            cleanup_preview_runner=_run_cleanup_preview,
-            emit=typer.echo,
-        )
+
+@app.command("demo-cleanup")
+def demo_cleanup() -> None:
+    """Run a human-readable archive walkthrough that deletes verified source objects."""
+    _run_visual_demo_command(perform_cleanup=True)
+
+
+def _run_visual_demo_command(*, perform_cleanup: bool) -> None:
+    _visual_demo_command.run(
+        perform_cleanup=perform_cleanup,
+        run_payload_command=_run_payload_command,
+        archive_runner=_run_archive,
+        cleanup_preview_runner=_run_cleanup_preview,
+        emit=typer.echo,
     )
-    if payload.get("status") != "ok":
-        raise typer.Exit(code=1)
 
 
 @app.command()
@@ -224,14 +230,7 @@ def _run_archive(settings: AppSettings, log_file: Path) -> dict[str, JsonValue]:
             debug_logger=_log_transfer_decision if settings.log_level == "DEBUG" else None,
         )
         if result.run_id != locked_run_id:
-            result = ArchiveRunResult(
-                locked_run_id,
-                result.manifest,
-                result.copy,
-                result.verify,
-                result.cleanup,
-                result.list,
-            )
+            result = replace(result, run_id=locked_run_id)
     except Exception as exc:
         error: S3ArchiverError = (
             exc if isinstance(exc, S3ArchiverError) else ArchiveRunError(str(exc))

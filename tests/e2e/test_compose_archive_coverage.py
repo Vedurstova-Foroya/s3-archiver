@@ -19,7 +19,11 @@ from tests.integration.localstack_harness import (
     compose_runtime_log_dir,
     localstack_test_env,
 )
-from tests.integration.localstack_object_helpers import listed_keys, localstack_s3_client
+from tests.integration.localstack_object_helpers import (
+    listed_keys,
+    localstack_s3_client,
+    read_tar_gz_members_text,
+)
 
 _COMPOSE_RETRYABLE_MESSAGES = (
     "HeadBucket operation: Not Found",
@@ -45,7 +49,8 @@ def test_compose_runtime_probe_executes_temp_file_backed_transfer(
     localstack_bucket_pair: LocalstackBucketPair,
 ) -> None:
     bucket_pair = localstack_bucket_pair
-    key = "compose-temp-file/runtime.txt"
+    key = "compose-temp-file/2099-12-31T00-00-00-runtime.txt"
+    archive_key = "compose-temp-file/2099-12-31.tar.gz"
     env_file = _write_archive_env_file(tmp_path, bucket_pair, retention_days=1)
     run_env = dict(compose_env)
     run_env["APP_ENV_FILE"] = str(env_file)
@@ -68,7 +73,7 @@ def test_compose_runtime_probe_executes_temp_file_backed_transfer(
 
         settings = AppSettings.from_env(dict(os.environ))
         temp_dir = Path("/tmp/s3-archiver-compose-temp-file")
-        key = "compose-temp-file/runtime.txt"
+        key = "compose-temp-file/2099-12-31T00-00-00-runtime.txt"
         decisions = []
         source_client = build_s3_client(settings.source)
         destination_client = build_s3_client(settings.destination)
@@ -140,11 +145,16 @@ def test_compose_runtime_probe_executes_temp_file_backed_transfer(
     payload = _temp_file_payload(result.stdout)
 
     assert payload["ok"] is True
-    assert payload["strategy"] == "temp_file_backed"
+    assert payload["strategy"] == "deterministic_tar_gzip"
     assert payload["temp_dir_files"] == []
     assert listed_keys(_client(tmp_path, bucket_pair, "destination"), bucket_pair.destination) == {
-        key
+        archive_key
     }
+    assert read_tar_gz_members_text(
+        _client(tmp_path, bucket_pair, "destination"),
+        bucket_pair.destination,
+        archive_key,
+    ) == {key: "probe\n"}
 
 
 def _write_archive_env_file(

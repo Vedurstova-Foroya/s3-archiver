@@ -3,13 +3,31 @@
 from __future__ import annotations
 
 import hashlib
+import io
 from collections.abc import Iterable, Mapping
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from itertools import chain
+from pathlib import Path
 
 from s3_archiver_core.archive_transfer import TransferStrategy
 from s3_archiver_core.s3 import S3ListedObject, S3ObjectProperties, VersioningState
+from s3_archiver_core.temp_files import default_temp_dir
+
+
+class FakeReadableBody:
+    """Readable byte stream for archive tests."""
+
+    _body: io.BytesIO
+
+    def __init__(self, payload: bytes) -> None:
+        self._body = io.BytesIO(payload)
+
+    def read(self, amt: int = -1) -> bytes:
+        return self._body.read(amt)
+
+    def close(self) -> None:
+        self._body.close()
 
 
 def object_properties(
@@ -59,7 +77,9 @@ class FakeBucket:
     """In-memory archive bucket test double."""
 
     bucket: str
+    temp_dir: Path
     copied: list[str]
+    uploaded: list[str]
     deleted: list[tuple[str, str | None]]
     fail_copy: bool
     _objects: dict[str, S3ListedObject]
@@ -80,9 +100,12 @@ class FakeBucket:
         payloads: Mapping[str, bytes] | None = None,
         version_payloads: Mapping[tuple[str, str | None], bytes] | None = None,
         versioning_state: VersioningState = "Enabled",
+        temp_dir: Path | None = None,
     ) -> None:
         self.bucket = bucket
+        self.temp_dir = temp_dir or default_temp_dir()
         self.copied = []
+        self.uploaded = []
         self.deleted = []
         self.fail_copy = False
         self._objects = {item.key: item for item in objects}
@@ -124,6 +147,37 @@ class FakeBucket:
             else self._payloads.get(key) or self._destination_payloads.get(key)
         )
         return None if payload is None else hashlib.sha256(payload).hexdigest()
+
+    def read_source_bytes(self, key: str, version_id: str | None = None) -> bytes:
+        payload = (
+            self._version_payloads.get((key, version_id))
+            if version_id is not None
+            else self._payloads.get(key)
+        )
+        if payload is None:
+            raise FileNotFoundError(key)
+        return payload
+
+    def read_source_stream(self, key: str, version_id: str | None = None) -> FakeReadableBody:
+        return FakeReadableBody(self.read_source_bytes(key, version_id))
+
+    def upload_archive_file(
+        self, destination_key: str, archive_path: Path, metadata: Mapping[str, str]
+    ) -> None:
+        if self.fail_copy:
+            raise RuntimeError("copy failed")
+        payload = archive_path.read_bytes()
+        self.uploaded.append(destination_key)
+        self._destination[destination_key] = object_properties(
+            size=len(payload), metadata=metadata, last_modified=datetime(2024, 4, 20, tzinfo=UTC)
+        )
+        self._destination_payloads[destination_key] = payload
+
+    def destination_payload(self, key: str) -> bytes:
+        payload = self._destination_payloads.get(key)
+        if payload is None:
+            raise FileNotFoundError(key)
+        return payload
 
     def copy_from(
         self,

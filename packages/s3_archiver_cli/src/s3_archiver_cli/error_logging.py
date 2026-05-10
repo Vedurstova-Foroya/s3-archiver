@@ -17,6 +17,21 @@ from s3_archiver_core.errors import (
 )
 from s3_archiver_core.settings import AppSettings
 
+from s3_archiver_cli.archive_cleanup_status import (
+    apply_group_cleanup_statuses,
+    failure_key,
+    mismatch_payload,
+    payload_cleanup_known_keys,
+)
+from s3_archiver_cli.archive_payloads import (
+    archive_group_payloads,
+    destination_archive_keys,
+    json_list,
+    manifest_target_day,
+    phase_status,
+    skipped_object_payloads,
+)
+
 type JsonScalar = str | int | float | bool | None
 type JsonValue = JsonScalar | dict[str, "JsonValue"] | list["JsonValue"]
 
@@ -55,17 +70,40 @@ def archive_result_payload(
 ) -> dict[str, JsonValue]:
     """Build the CLI payload for a completed archive invocation."""
 
+    target_day = manifest_target_day(result.manifest)
+    archive_groups = archive_group_payloads(
+        result.manifest, cleanup_status=phase_status(result.cleanup)
+    )
+    apply_group_cleanup_statuses(result, archive_groups)
+    destination_keys = destination_archive_keys(archive_groups)
+    skipped_objects = skipped_object_payloads(result.manifest)
+    archive_group_values = json_list(archive_groups)
+    skipped_object_values = json_list(skipped_objects)
+    manifest_payload: dict[str, JsonValue] = {
+        "object_count": len(result.manifest.entries),
+        "target_day": target_day,
+        "archive_count": len(archive_groups),
+        "source_object_count": len(result.manifest.entries),
+        "skipped_object_count": len(skipped_objects),
+        "destination_archive_keys": destination_keys,
+        "skipped_objects": skipped_object_values,
+        "archive_groups": archive_group_values,
+        "run_started_at_utc": result.manifest.run_started_at_utc.isoformat(),
+        "retention_cutoff_utc": result.manifest.retention_cutoff_utc.isoformat(),
+    }
     return {
         "status": status,
         "run_id": result.run_id,
         "source_bucket": settings.source.bucket,
         "destination_bucket": settings.destination.bucket,
         "log_file": str(log_file),
-        "manifest": {
-            "object_count": len(result.manifest.entries),
-            "run_started_at_utc": result.manifest.run_started_at_utc.isoformat(),
-            "retention_cutoff_utc": result.manifest.retention_cutoff_utc.isoformat(),
-        },
+        "target_day": target_day,
+        "archive_count": len(archive_groups),
+        "source_object_count": len(result.manifest.entries),
+        "skipped_object_count": len(skipped_objects),
+        "destination_archive_keys": destination_keys,
+        "archive_groups": archive_group_values,
+        "manifest": manifest_payload,
         "phases": {
             "list": _phase_payload(result.list),
             "copy": _phase_payload(result.copy),
@@ -85,14 +123,15 @@ def archive_failure_payload(
     phase, detail = _first_archive_failure(result)
     timed_out = detail == "archive run timed out"
     payload = archive_result_payload("error", result, settings, log_file)
+    cleanup_known_keys = payload_cleanup_known_keys(phase, payload)
     payload.update(
         {
             "phase": f"archive.{phase}",
             "field": "ARCHIVER_RUN_TIMEOUT" if timed_out else None,
             "message": detail if timed_out else "archive run failed",
             "details": detail,
-            "key": _failure_key(detail),
-            "mismatch": _mismatch_payload(phase, detail),
+            "key": failure_key(detail, cleanup_known_keys),
+            "mismatch": mismatch_payload(phase, detail, cleanup_known_keys),
             "reason": "archive_run_timeout" if timed_out else None,
             "timed_out": timed_out,
         }
@@ -126,9 +165,8 @@ def error_payload(
 
 
 def _phase_payload(result: ArchivePhaseResult) -> dict[str, JsonValue]:
-    status = "error" if not result.ok else "skipped" if result.skipped else "ok"
     return {
-        "status": status,
+        "status": phase_status(result),
         "failure_count": len(result.failures),
         "failures": list(result.failures),
     }
@@ -139,41 +177,6 @@ def _first_archive_failure(result: ArchiveRunResult) -> tuple[str, str]:
         if phase.failures:
             return phase.phase, phase.failures[0]
     return "unknown", "archive run failed"
-
-
-def _failure_key(detail: str) -> str | None:
-    key, separator, _ = detail.partition(":")
-    return key if separator else None
-
-
-def _mismatch_payload(phase: str, detail: str) -> dict[str, JsonValue] | None:
-    if detail == "archive run timed out":
-        return None
-    key, separator, remainder = detail.partition(":")
-    return {
-        "phase": phase,
-        "key": key if separator else None,
-        "category": _mismatch_category(remainder.strip() if separator else detail),
-        "detail": remainder.strip() if separator else detail,
-    }
-
-
-def _mismatch_category(detail: str) -> str:
-    normalized = detail.lower()
-    for category in (
-        "source fingerprint",
-        "size",
-        "object property",
-        "metadata",
-        "tag",
-        "content",
-        "source changed",
-        "destination missing",
-        "source missing",
-    ):
-        if category in normalized:
-            return category.replace(" ", "_")
-    return "archive_failure"
 
 
 def _error_field(error: S3ArchiverError) -> str | None:

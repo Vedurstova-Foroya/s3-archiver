@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import subprocess
 import textwrap
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Literal, TypedDict, cast
 
@@ -24,8 +24,8 @@ from tests.integration.localstack_object_helpers import (
     listed_keys,
     localstack_s3_client,
     put_test_object,
+    read_tar_gz_members_text,
 )
-from tests.integration.test_localstack_timestamp_seed import run_timestamp_seed_helper
 
 _COMPOSE_RETRYABLE_MESSAGES = (
     "HeadBucket operation: Not Found",
@@ -48,6 +48,7 @@ class ArchivePayload(TypedDict):
     status: str
     source_bucket: str
     destination_bucket: str
+    destination_archive_keys: list[str]
     manifest: dict[str, object]
     phases: dict[str, ArchivePhasePayload]
 
@@ -61,7 +62,7 @@ class ArchivePayload(TypedDict):
         ("true", "ok", False),
     ],
 )
-def test_compose_archive_copies_keys_and_honors_cleanup_gate(
+def test_compose_archive_writes_daily_archives_and_honors_cleanup_gate(
     tmp_path: Path,
     compose_env: dict[str, str],
     localstack_bucket_pair: LocalstackBucketPair,
@@ -73,13 +74,11 @@ def test_compose_archive_copies_keys_and_honors_cleanup_gate(
     source_client = _client(tmp_path, bucket_pair, "source")
     destination_client = _client(tmp_path, bucket_pair, "destination")
     source_prefix = _case_source_prefix(cleanup_value)
-    source_keys = _case_source_keys(source_prefix)
-    _ = run_timestamp_seed_helper(
-        compose_env,
-        prefix=source_prefix,
-        days=(2, 3),
-        seed_now=datetime.now(tz=UTC).replace(microsecond=0),
-    )
+    target_day = _target_day()
+    archive_key = f"{source_prefix}/{target_day}.tar.gz"
+    source_keys = _case_source_keys(source_prefix, target_day)
+    for key in source_keys:
+        _ = put_test_object(source_client, bucket_pair.source, key)
     assert listed_keys(source_client, bucket_pair.source) == source_keys
     env_file = _write_archive_env_file(tmp_path, bucket_pair, cleanup_value)
     run_env = dict(compose_env)
@@ -98,44 +97,40 @@ def test_compose_archive_copies_keys_and_honors_cleanup_gate(
         "verify": "ok",
         "cleanup": expected_cleanup_status,
     }
-    assert listed_keys(destination_client, bucket_pair.destination) == source_keys
+    assert payload["destination_archive_keys"] == [archive_key]
+    assert listed_keys(destination_client, bucket_pair.destination) == {archive_key}
+    assert read_tar_gz_members_text(destination_client, bucket_pair.destination, archive_key) == {
+        key: f"payload for {key}\n" for key in source_keys
+    }
     expected_source_keys = source_keys if source_should_remain else set[str]()
     assert listed_keys(source_client, bucket_pair.source) == expected_source_keys
 
 
 @pytest.mark.e2e()
 @pytest.mark.parametrize(
-    ("destination_endpoint", "expected_strategy"),
+    "destination_endpoint",
     [
-        (LOCALSTACK_COMPOSE_ENDPOINT, "simple_native_copy"),
-        ("http://localstack-alt:4566", "multipart_streaming"),
+        LOCALSTACK_COMPOSE_ENDPOINT,
+        "http://localstack-alt:4566",
     ],
 )
-def test_compose_archive_debug_logs_expected_strategy_and_preserves_source_properties(
+def test_compose_archive_debug_logs_deterministic_tar_archive_metadata(
     tmp_path: Path,
     compose_env: dict[str, str],
     localstack_bucket_pair: LocalstackBucketPair,
     destination_endpoint: str,
-    expected_strategy: str,
 ) -> None:
     bucket_pair = localstack_bucket_pair
     source_client = _client(tmp_path, bucket_pair, "source")
     destination_client = _client(tmp_path, bucket_pair, "destination")
-    key = "compose-debug/strategy.txt"
+    target_day = _target_day()
+    key = f"compose-debug/{target_day}T00-00-00-strategy.txt"
+    archive_key = f"compose-debug/{target_day}.tar.gz"
     _ = put_test_object(
         source_client,
         bucket_pair.source,
         key,
         body=b"strategy\n",
-        metadata={
-            "seed-key": key,
-            "s3-archiver-test-last-modified": (
-                datetime.now(tz=UTC) - timedelta(days=2)
-            ).isoformat(),
-        },
-        tags={"kind": "archive"},
-        ContentType="text/plain",
-        CacheControl="max-age=60",
     )
     env_file = _write_archive_env_file(tmp_path, bucket_pair, None)
     env_text = env_file.read_text(encoding="utf-8").replace("LOG_LEVEL=INFO", "LOG_LEVEL=DEBUG")
@@ -148,18 +143,20 @@ def test_compose_archive_debug_logs_expected_strategy_and_preserves_source_prope
     run_env["APP_ENV_FILE"] = str(env_file)
 
     result = _run_compose(run_env, "run", "--rm", "app", "archive")
-    destination_head = destination_client.head_object(Bucket=bucket_pair.destination, Key=key)
+    destination_head = destination_client.head_object(
+        Bucket=bucket_pair.destination, Key=archive_key
+    )
     metadata = cast(dict[str, str], destination_head["Metadata"])
 
     assert '"event": "archive.transfer.strategy_selected"' in result.stdout
-    assert f'"strategy": "{expected_strategy}"' in result.stdout
-    assert destination_head["ContentType"] == "text/plain"
-    assert destination_head["CacheControl"] == "max-age=60"
-    assert metadata["seed-key"] == key
-    assert json.loads(metadata["s3-archiver-source-fingerprint"])["source_key"] == key
-    assert destination_client.get_object_tagging(Bucket=bucket_pair.destination, Key=key)[
-        "TagSet"
-    ] == [{"Key": "kind", "Value": "archive"}]
+    assert '"strategy": "deterministic_tar_gzip"' in result.stdout
+    assert destination_head["ContentType"] == "application/gzip"
+    assert metadata["s3-archiver-target-day"] == str(target_day)
+    assert metadata["s3-archiver-source-count"] == "1"
+    assert "s3-archiver-archive-sha256" in metadata
+    assert read_tar_gz_members_text(destination_client, bucket_pair.destination, archive_key) == {
+        key: "strategy\n"
+    }
 
 
 @pytest.mark.e2e()
@@ -228,11 +225,15 @@ def _case_source_prefix(cleanup_value: str | None) -> str:
     return f"compose-archive/{name}"
 
 
-def _case_source_keys(prefix: str) -> set[str]:
+def _case_source_keys(prefix: str, target_day: date) -> set[str]:
     return {
-        f"{prefix}/age-2-days.txt",
-        f"{prefix}/age-3-days.txt",
+        f"{prefix}/{target_day}T00-00-00-a.txt",
+        f"{prefix}/{target_day}T01-00-00-b.txt",
     }
+
+
+def _target_day() -> date:
+    return datetime.now(tz=UTC).date() - timedelta(days=1)
 
 
 def _write_archive_env_file(

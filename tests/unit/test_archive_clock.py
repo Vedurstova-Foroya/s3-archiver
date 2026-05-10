@@ -2,16 +2,21 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import pytest
+from s3_archiver_core._archive_protocols import ArchiveReadableBody
 from s3_archiver_core.archive import run_archive
 from s3_archiver_core.archive_options import ArchiveOptions
 from s3_archiver_core.s3 import S3ListedObject, S3ObjectProperties, VersioningState
+from s3_archiver_core.temp_files import default_temp_dir
 
 
 class EmptyBucket:
     bucket: str = "bucket"
+    temp_dir: Path = default_temp_dir()
 
     def versioning_state(self) -> VersioningState:
         return "Disabled"
@@ -27,6 +32,18 @@ class EmptyBucket:
     def content_sha256(self, key: str, version_id: str | None = None) -> str | None:
         _ = (key, version_id)
         return None
+
+    def read_source_bytes(self, key: str, version_id: str | None = None) -> bytes:
+        raise AssertionError(f"empty manifest must not read {key!r} {version_id!r}")
+
+    def read_source_stream(self, key: str, version_id: str | None = None) -> ArchiveReadableBody:
+        raise AssertionError(f"empty manifest must not read {key!r} {version_id!r}")
+
+    def upload_archive_file(
+        self, destination_key: str, archive_path: Path, metadata: Mapping[str, str]
+    ) -> None:
+        _ = (archive_path, metadata)
+        raise AssertionError(f"empty manifest must not upload {destination_key!r}")
 
     def copy_from(self, *_args: object, **_kwargs: object) -> None:
         raise AssertionError("empty manifest must not copy")

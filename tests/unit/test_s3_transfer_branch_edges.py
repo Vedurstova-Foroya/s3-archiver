@@ -2,14 +2,15 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
-from typing import final, override
+from typing import cast, final, override
 
 import pytest
 from botocore.exceptions import ClientError
+from s3_archiver_core import s3_transfer as transfer_module
 from s3_archiver_core.archive_s3 import S3ArchiveBucket
-from s3_archiver_core.s3 import S3ObjectProperties
+from s3_archiver_core.s3 import S3_CHUNK_BYTES, S3ObjectProperties
 
 from tests.unit.archive_s3_fakes import FakeArchiveClient, copy_object, properties
 
@@ -109,3 +110,20 @@ def test_s3_transfer_stage_failure_before_file_creation(tmp_path: Path) -> None:
         )
 
     assert blocked_temp_dir.read_text(encoding="utf-8") == "file"
+
+
+@pytest.mark.unit()
+def test_s3_file_upload_chunk_size_supports_large_archives() -> None:
+    size = 90 * 1024 * 1024 * 1024
+
+    chunk_size = _multipart_chunk_size(size)
+
+    assert chunk_size > S3_CHUNK_BYTES
+    assert (size + chunk_size - 1) // chunk_size <= transfer_module.S3_MAX_MULTIPART_PARTS
+
+
+def _multipart_chunk_size(size: int) -> int:
+    return cast(
+        Callable[[int], int],
+        transfer_module.__dict__["_multipart_chunk_size"],
+    )(size)

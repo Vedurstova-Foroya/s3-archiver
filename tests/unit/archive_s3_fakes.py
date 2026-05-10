@@ -35,10 +35,9 @@ class FakeArchiveClient:
 
     def list_objects_v2(self, **kwargs: object) -> Mapping[str, object]:
         self.list_v2_calls.append(kwargs)
-        if "ContinuationToken" not in kwargs:
+        if "StartAfter" not in kwargs:
             return {
                 "IsTruncated": True,
-                "NextContinuationToken": "page-2",
                 "Contents": [object_item("a.txt")],
             }
         return {"IsTruncated": False, "Contents": [object_item("b.txt")]}

@@ -40,7 +40,7 @@ def test_s3_archive_bucket_lists_unversioned_pages() -> None:
 
     assert [item.key for item in listed] == ["a.txt", "b.txt"]
     assert client.list_v2_calls[0] == {"Bucket": "source", "MaxKeys": 1000}
-    assert client.list_v2_calls[1]["ContinuationToken"] == "page-2"
+    assert client.list_v2_calls[1]["StartAfter"] == "a.txt"
 
 
 @pytest.mark.unit()
@@ -144,6 +144,65 @@ def test_s3_archive_bucket_streaming_upload_uses_bounded_parts() -> None:
     assert destination_client.upload_part_sizes == [S3_CHUNK_BYTES, 1]
     assert destination_client.abort_calls == []
     assert destination_client.tagging_calls[0]["Bucket"] == "destination"
+
+
+@pytest.mark.unit()
+def test_s3_archive_bucket_upload_archive_file_uses_multipart_upload(tmp_path: Path) -> None:
+    client = FakeArchiveClient()
+    archive_path = tmp_path / "archive.tar.gz"
+    _ = archive_path.write_bytes(b"a" * (S3_CHUNK_BYTES + 1))
+    bucket = S3ArchiveBucket(client, "destination")
+
+    bucket.upload_archive_file("archives/day.tar.gz", archive_path, {"kind": "daily"})
+
+    assert client.put_call == {}
+    assert client.create_calls[0] == {
+        "Bucket": "destination",
+        "Key": "archives/day.tar.gz",
+        "Metadata": {"kind": "daily"},
+        "ContentType": "application/gzip",
+    }
+    assert client.upload_part_sizes == [S3_CHUNK_BYTES, 1]
+    assert client.complete_calls[0]["MultipartUpload"] == {
+        "Parts": [{"ETag": '"part-1"', "PartNumber": 1}, {"ETag": '"part-2"', "PartNumber": 2}]
+    }
+
+
+@pytest.mark.unit()
+def test_s3_archive_bucket_upload_archive_file_uses_put_for_empty_file(tmp_path: Path) -> None:
+    client = FakeArchiveClient()
+    archive_path = tmp_path / "empty.tar.gz"
+    _ = archive_path.write_bytes(b"")
+
+    S3ArchiveBucket(client, "destination").upload_archive_file(
+        "archives/empty.tar.gz", archive_path, {"kind": "daily"}
+    )
+
+    assert client.create_calls == []
+    assert client.put_call == {
+        "Bucket": "destination",
+        "Key": "archives/empty.tar.gz",
+        "Metadata": {"kind": "daily"},
+        "ContentType": "application/gzip",
+        "Body": b"",
+    }
+
+
+@pytest.mark.unit()
+def test_s3_archive_bucket_upload_archive_file_aborts_failed_multipart(tmp_path: Path) -> None:
+    client = FakeArchiveClient()
+    client.fail_upload_part = True
+    archive_path = tmp_path / "archive.tar.gz"
+    _ = archive_path.write_bytes(b"payload")
+
+    with pytest.raises(RuntimeError, match="upload failed"):
+        S3ArchiveBucket(client, "destination").upload_archive_file(
+            "archives/day.tar.gz", archive_path, {"kind": "daily"}
+        )
+
+    assert client.abort_calls == [
+        {"Bucket": "destination", "Key": "archives/day.tar.gz", "UploadId": "upload-1"}
+    ]
 
 
 @pytest.mark.unit()

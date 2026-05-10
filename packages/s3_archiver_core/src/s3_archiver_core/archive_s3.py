@@ -1,5 +1,3 @@
-"""Concrete S3 archive bucket adapter."""
-
 from __future__ import annotations
 
 import hashlib
@@ -11,6 +9,16 @@ from typing import Protocol, cast
 
 from botocore.exceptions import ClientError
 
+from s3_archiver_core._archive_s3_helpers import (
+    is_not_found_error,
+    object_list,
+    optional_string,
+    properties_from_head,
+    required_int,
+    supports_checksum_mode,
+    version_id,
+    versioned_kwargs,
+)
 from s3_archiver_core._archive_s3_protocols import ArchiveS3Client
 from s3_archiver_core.archive_transfer import TransferStrategy
 from s3_archiver_core.s3 import (
@@ -19,15 +27,14 @@ from s3_archiver_core.s3 import (
     S3ListedObject,
     S3ObjectProperties,
     VersioningState,
-    checksums_from_head_fields,
 )
-from s3_archiver_core.s3_transfer import copy_s3_object
+from s3_archiver_core.s3_transfer import copy_s3_object, upload_s3_file
 from s3_archiver_core.temp_files import default_temp_dir
 
 
 @dataclass(frozen=True, slots=True)
 class S3ArchiveBucket:
-    """Bucket-scoped S3 operations used by the archive engine."""
+    """Archive bucket adapter backed by an S3-compatible client."""
 
     client: ArchiveS3Client
     bucket: str
@@ -35,7 +42,6 @@ class S3ArchiveBucket:
 
     def versioning_state(self) -> VersioningState:
         """Return the bucket versioning state."""
-
         response = self.client.get_bucket_versioning(Bucket=self.bucket)
         status = response.get("Status")
         if status == "Enabled":
@@ -45,43 +51,37 @@ class S3ArchiveBucket:
         return "Disabled"
 
     def list_source_objects(self, versioning_state: VersioningState) -> Iterator[S3ListedObject]:
-        """Yield current source objects, excluding delete markers."""
-
+        """List current source objects for the supplied versioning mode."""
         if versioning_state == "Disabled":
             yield from self._list_unversioned()
             return
         yield from self._list_versioned()
 
     def head_object(self, key: str, version_id: str | None = None) -> S3ObjectProperties | None:
-        """Return object properties, or ``None`` when the object is absent."""
-
-        kwargs = _versioned_kwargs(self.bucket, key, version_id)
+        """Return S3 object properties, or None when the object is missing."""
+        kwargs = versioned_kwargs(self.bucket, key, version_id)
         try:
             head = self.client.head_object(**(kwargs | {"ChecksumMode": "ENABLED"}))
         except ClientError as exc:
-            if _is_not_found_error(exc):
+            if is_not_found_error(exc):
                 return None
-            if not _supports_checksum_mode(exc):
+            if not supports_checksum_mode(exc):
                 raise
             try:
                 head = self.client.head_object(**kwargs)
             except ClientError as retry_exc:
-                if _is_not_found_error(retry_exc):
+                if is_not_found_error(retry_exc):
                     return None
                 raise
         tags = self.get_tags(key, version_id)
-        return _properties_from_head(head, tags)
+        return properties_from_head(head, tags)
 
     def content_sha256(self, key: str, version_id: str | None = None) -> str | None:
-        """Return a SHA-256 digest for object content, or ``None`` when absent."""
-
+        """Return the SHA-256 digest of object content when present."""
         try:
-            response = self.client.get_object(**_versioned_kwargs(self.bucket, key, version_id))
-        except ClientError as exc:
-            if _is_not_found_error(exc):
-                return None
-            raise
-        body = cast(ReadableBody, response["Body"])
+            body = self.read_source_stream(key, version_id)
+        except FileNotFoundError:
+            return None
         digest = hashlib.sha256()
         try:
             while chunk := body.read(S3_CHUNK_BYTES):
@@ -90,6 +90,40 @@ class S3ArchiveBucket:
             body.close()
         return digest.hexdigest()
 
+    def read_source_bytes(self, key: str, version_id: str | None = None) -> bytes:
+        """Return the complete source object payload."""
+        body = self.read_source_stream(key, version_id)
+        chunks: list[bytes] = []
+        try:
+            while chunk := body.read(S3_CHUNK_BYTES):
+                chunks.append(chunk)
+        finally:
+            body.close()
+        return b"".join(chunks)
+
+    def read_source_stream(self, key: str, version_id: str | None = None) -> ReadableBody:
+        """Return a streaming source object body."""
+        try:
+            response = self.client.get_object(**versioned_kwargs(self.bucket, key, version_id))
+        except ClientError as exc:
+            if is_not_found_error(exc):
+                raise FileNotFoundError(key) from exc
+            raise
+        return cast(ReadableBody, response["Body"])
+
+    def upload_archive_file(
+        self, destination_key: str, archive_path: Path, metadata: Mapping[str, str]
+    ) -> None:
+        """Upload an archive file with deterministic metadata."""
+        upload_s3_file(
+            cast(S3Client, self.client),
+            self.bucket,
+            destination_key,
+            archive_path,
+            metadata,
+            content_type="application/gzip",
+        )
+
     def _source_properties(self, key: str, version_id: str | None) -> S3ObjectProperties:
         properties = self.head_object(key, version_id)
         if properties is None:
@@ -97,9 +131,8 @@ class S3ArchiveBucket:
         return properties
 
     def get_tags(self, key: str, version_id: str | None = None) -> Mapping[str, str]:
-        """Return object tags as a plain string mapping."""
-
-        response = self.client.get_object_tagging(**_versioned_kwargs(self.bucket, key, version_id))
+        """Return object tags as a string mapping."""
+        response = self.client.get_object_tagging(**versioned_kwargs(self.bucket, key, version_id))
         tag_set = response.get("TagSet", [])
         if not isinstance(tag_set, list):
             return {}
@@ -125,8 +158,7 @@ class S3ArchiveBucket:
         destination_metadata: Mapping[str, str],
         strategy: TransferStrategy,
     ) -> None:
-        """Copy one source object into this bucket while preserving portable properties."""
-
+        """Copy one source object into this bucket."""
         if not isinstance(source, S3ArchiveBucket):
             raise TypeError("S3ArchiveBucket copy requires an S3ArchiveBucket source")
         copy_s3_object(
@@ -144,22 +176,25 @@ class S3ArchiveBucket:
         )
 
     def delete_source(self, key: str, version_id: str | None) -> None:
-        """Delete an exact source version when available, otherwise delete by key."""
-
-        _ = self.client.delete_object(**_versioned_kwargs(self.bucket, key, version_id))
+        """Delete a source object or source object version."""
+        _ = self.client.delete_object(**versioned_kwargs(self.bucket, key, version_id))
 
     def _list_unversioned(self) -> Iterator[S3ListedObject]:
-        continuation_token: str | None = None
+        start_after: str | None = None
         while True:
             kwargs: dict[str, object] = {"Bucket": self.bucket, "MaxKeys": 1000}
-            if continuation_token is not None:
-                kwargs["ContinuationToken"] = continuation_token
+            if start_after is not None:
+                kwargs["StartAfter"] = start_after
             page = self.client.list_objects_v2(**kwargs)
-            for item in _object_list(page.get("Contents")):
+            last_key: str | None = None
+            for item in object_list(page.get("Contents")):
+                last_key = str(item["Key"])
                 yield self._listed_from_item(item, None)
             if page.get("IsTruncated") is not True:
                 return
-            continuation_token = _optional_string(page.get("NextContinuationToken"))
+            if last_key is None:
+                raise RuntimeError("S3 list_objects_v2 returned a truncated empty page")
+            start_after = last_key
 
     def _list_versioned(self) -> Iterator[S3ListedObject]:
         key_marker: str | None = None
@@ -171,126 +206,32 @@ class S3ArchiveBucket:
             if version_marker is not None:
                 kwargs["VersionIdMarker"] = version_marker
             page = self.client.list_object_versions(**kwargs)
-            for item in _object_list(page.get("Versions")):
+            for item in object_list(page.get("Versions")):
                 if item.get("IsLatest") is True:
-                    yield self._listed_from_item(item, _version_id(item.get("VersionId")))
+                    yield self._listed_from_item(item, version_id(item.get("VersionId")))
             if page.get("IsTruncated") is not True:
                 return
-            key_marker = _optional_string(page.get("NextKeyMarker"))
-            version_marker = _optional_string(page.get("NextVersionIdMarker"))
+            key_marker = optional_string(page.get("NextKeyMarker"))
+            version_marker = optional_string(page.get("NextVersionIdMarker"))
 
     def _listed_from_item(
         self, item: Mapping[str, object], version_id: str | None
     ) -> S3ListedObject:
         key = str(item["Key"])
-        size = _required_int(item["Size"])
+        size = required_int(item["Size"])
         last_modified = cast(datetime, item["LastModified"])
-        etag = _optional_string(item.get("ETag"))
+        etag = optional_string(item.get("ETag"))
         properties = self._source_properties(key, version_id)
         return S3ListedObject(key, size, last_modified, etag, version_id, properties)
 
 
 class ReadableBody(Protocol):
-    """Streaming body returned by S3 object reads."""
+    """Readable streaming body returned by S3 get-object calls."""
 
-    def read(self, amt: int | None = None) -> bytes:
-        """Read body bytes."""
+    def read(self, amt: int = -1) -> bytes:
+        """Read up to ``amt`` bytes."""
         ...
 
     def close(self) -> None:
         """Close the body."""
         ...
-
-
-def _versioned_kwargs(bucket: str, key: str, version_id: str | None) -> dict[str, object]:
-    kwargs: dict[str, object] = {"Bucket": bucket, "Key": key}
-    if version_id is not None:
-        kwargs["VersionId"] = version_id
-    return kwargs
-
-
-def _properties_from_head(
-    head: Mapping[str, object], tags: Mapping[str, str]
-) -> S3ObjectProperties:
-    return S3ObjectProperties(
-        size=_optional_int(head.get("ContentLength"), 0),
-        etag=_optional_string(head.get("ETag")),
-        content_type=_optional_string(head.get("ContentType")),
-        content_encoding=_optional_string(head.get("ContentEncoding")),
-        content_language=_optional_string(head.get("ContentLanguage")),
-        content_disposition=_optional_string(head.get("ContentDisposition")),
-        cache_control=_optional_string(head.get("CacheControl")),
-        expires=cast(datetime | None, head.get("Expires")),
-        metadata=_string_mapping(head.get("Metadata")),
-        tags=tags,
-        last_modified=cast(datetime | None, head.get("LastModified")),
-        checksums=checksums_from_head_fields(head),
-        checksum_type=_optional_string(head.get("ChecksumType")),
-    )
-
-
-def _is_not_found_error(exc: ClientError) -> bool:
-    response = cast(Mapping[str, object], exc.response)
-    error = response.get("Error")
-    metadata = response.get("ResponseMetadata")
-    code = None
-    status = None
-    if isinstance(error, dict):
-        code = cast(Mapping[object, object], error).get("Code")
-    if isinstance(metadata, dict):
-        status = cast(Mapping[object, object], metadata).get("HTTPStatusCode")
-    return str(code) in {"404", "NoSuchKey", "NotFound"} or status == 404
-
-
-def _supports_checksum_mode(exc: ClientError) -> bool:
-    response = cast(Mapping[str, object], exc.response)
-    metadata = response.get("ResponseMetadata")
-    status = None
-    if isinstance(metadata, dict):
-        status = cast(Mapping[object, object], metadata).get("HTTPStatusCode")
-    return status in {400, 403}
-
-
-def _object_list(value: object) -> list[Mapping[str, object]]:
-    if not isinstance(value, list):
-        return []
-    raw_items = cast(list[object], value)
-    items: list[Mapping[str, object]] = []
-    for raw_item in raw_items:
-        if isinstance(raw_item, dict):
-            items.append(cast(Mapping[str, object], raw_item))
-    return items
-
-
-def _required_int(value: object) -> int:
-    if isinstance(value, int):
-        return value
-    if isinstance(value, str):
-        return int(value)
-    raise TypeError(f"expected integer-compatible value, got {type(value).__name__}")
-
-
-def _optional_int(value: object, default: int) -> int:
-    if value is None:
-        return default
-    return _required_int(value)
-
-
-def _optional_string(value: object) -> str | None:
-    if value is None:
-        return None
-    return str(value)
-
-
-def _version_id(value: object) -> str | None:
-    version_id = _optional_string(value)
-    if version_id == "null":
-        return None
-    return version_id
-
-
-def _string_mapping(value: object) -> Mapping[str, str]:
-    if not isinstance(value, dict):
-        return {}
-    raw = cast(Mapping[object, object], value)
-    return {str(key): str(item) for key, item in raw.items()}

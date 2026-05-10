@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from s3_archiver_core.archive import run_archive
@@ -22,7 +22,13 @@ def _clock() -> datetime:
 def _canonical_source(prefix: str) -> FakeBucket:
     return FakeBucket(
         "source",
-        tuple(_listed(f"{prefix}/age-{day}-days.txt", day) for day in CANONICAL_DAYS),
+        tuple(
+            _listed(
+                f"{prefix}/{(STARTED.date() - timedelta(days=day)).isoformat()}T00-00-00.txt",
+                day,
+            )
+            for day in CANONICAL_DAYS
+        ),
     )
 
 
@@ -31,7 +37,7 @@ def _canonical_source(prefix: str) -> FakeBucket:
     ("retention_days", "cleanup_enabled"),
     [(60, False), (60, True), (30, False)],
 )
-def test_canonical_retention_dataset_has_exact_archive_split(
+def test_canonical_retention_dataset_archives_each_eligible_day(
     retention_days: int,
     cleanup_enabled: bool,
 ) -> None:
@@ -47,13 +53,21 @@ def test_canonical_retention_dataset_has_exact_archive_split(
         clock=_clock,
     )
 
-    archived_days = {day for day in CANONICAL_DAYS if day > retention_days}
-    expected_keys = {f"{prefix}/age-{day}-days.txt" for day in archived_days}
+    expected_days = tuple(range(retention_days, max(CANONICAL_DAYS) + 1))
+    expected_keys = [
+        f"{prefix}/{(STARTED.date() - timedelta(days=day)).isoformat()}T00-00-00.txt"
+        for day in expected_days
+    ]
+    expected_archive_keys = [
+        f"{prefix}/{(STARTED.date() - timedelta(days=day)).isoformat()}.tar.gz"
+        for day in reversed(expected_days)
+    ]
 
     assert result.ok is True
-    assert len(result.manifest.entries) == len(archived_days)
-    assert set(destination.copied) == expected_keys
+    assert [entry.key for entry in result.manifest.entries] == expected_keys
+    assert destination.uploaded == expected_archive_keys
+    assert destination.copied == []
     if cleanup_enabled:
-        assert {key for key, _version_id in source.deleted} == expected_keys
+        assert source.deleted == [(key, "v1") for key in reversed(expected_keys)]
     else:
         assert source.deleted == []

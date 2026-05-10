@@ -6,7 +6,7 @@ from collections.abc import Callable
 from queue import Empty, Queue
 from threading import Thread
 
-from s3_archiver_core.archive_manifest import ManifestEntry
+from s3_archiver_core.archive_manifest import ArchiveGroup, ManifestEntry
 
 
 def run_archive_workers(
@@ -40,6 +40,34 @@ def run_archive_workers(
             if failure is not None:
                 failures.append(failure)
     return tuple(failures)
+
+
+def run_archive_group_workers(
+    groups: tuple[ArchiveGroup, ...],
+    max_workers: int,
+    worker: Callable[[ArchiveGroup], str | None],
+    timed_out: Callable[[], bool],
+    time_remaining: Callable[[], float],
+) -> tuple[str, ...]:
+    """Run one worker per archive group through the manifest-entry worker runner."""
+
+    groups_by_destination = {group.destination_archive_key: group for group in groups}
+
+    def worker_entry(entry: ManifestEntry) -> str | None:
+        group = groups_by_destination[entry.destination_archive_key]
+        try:
+            return worker(group)
+        except Exception as exc:
+            return f"{group.destination_archive_key}: {exc}"
+
+    worker_entries = tuple(group.entries[0] for group in groups)
+    return run_archive_workers(
+        worker_entries,
+        max_workers,
+        worker_entry,
+        timed_out,
+        time_remaining,
+    )
 
 
 def _call_worker(worker: Callable[[ManifestEntry], str | None], entry: ManifestEntry) -> str | None:

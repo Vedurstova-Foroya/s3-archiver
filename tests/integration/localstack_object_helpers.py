@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import gzip
+import tarfile
 import time
 from collections.abc import Callable, Mapping
 from datetime import UTC, datetime, timedelta
+from io import BytesIO
 from typing import Literal, cast
 
 from botocore.exceptions import BotoCoreError, ClientError
@@ -67,12 +70,23 @@ def put_test_object(
 
 
 def listed_keys(client: S3Client, bucket: str) -> set[str]:
-    response = _retry_localstack_call(lambda: client.list_objects_v2(Bucket=bucket))
-    return {
-        str(entry["Key"])
-        for entry in _object_entries(response.get("Contents"))
-        if entry.get("Key") is not None
-    }
+    keys: set[str] = set()
+    start_after: str | None = None
+    while True:
+        kwargs: dict[str, object] = {"Bucket": bucket}
+        if start_after is not None:
+            kwargs["StartAfter"] = start_after
+        response = _retry_localstack_call(lambda kwargs=kwargs: client.list_objects_v2(**kwargs))
+        last_key: str | None = None
+        for entry in _object_entries(response.get("Contents")):
+            if entry.get("Key") is not None:
+                last_key = str(entry["Key"])
+                keys.add(last_key)
+        if response.get("IsTruncated") is not True:
+            return keys
+        if last_key is None:
+            raise AssertionError("LocalStack returned a truncated empty object page")
+        start_after = last_key
 
 
 def listed_key_versions(client: S3Client, bucket: str, key: str) -> list[tuple[str, str, bool]]:
@@ -89,6 +103,37 @@ def listed_key_versions(client: S3Client, bucket: str, key: str) -> list[tuple[s
 def read_object_text(client: S3Client, bucket: str, key: str) -> str:
     response = _retry_localstack_call(lambda: client.get_object(Bucket=bucket, Key=key))
     return cast(StreamingBody, response["Body"]).read().decode()
+
+
+def read_object_bytes(client: S3Client, bucket: str, key: str) -> bytes:
+    response = _retry_localstack_call(lambda: client.get_object(Bucket=bucket, Key=key))
+    return cast(StreamingBody, response["Body"]).read()
+
+
+def read_tar_gz_members_text(client: S3Client, bucket: str, key: str) -> dict[str, str]:
+    payload = read_object_bytes(client, bucket, key)
+    with (
+        gzip.GzipFile(fileobj=BytesIO(payload), mode="rb") as gzip_file,
+        tarfile.open(fileobj=gzip_file, mode="r:") as archive,
+    ):
+        members: dict[str, str] = {}
+        for member in archive.getmembers():
+            extracted = archive.extractfile(member)
+            if extracted is None:
+                continue
+            members[member.name] = extracted.read().decode()
+        return members
+
+
+def read_tar_gz_member_pax_headers(
+    client: S3Client, bucket: str, key: str
+) -> dict[str, dict[str, str]]:
+    payload = read_object_bytes(client, bucket, key)
+    with (
+        gzip.GzipFile(fileobj=BytesIO(payload), mode="rb") as gzip_file,
+        tarfile.open(fileobj=gzip_file, mode="r:") as archive,
+    ):
+        return {member.name: dict(member.pax_headers) for member in archive.getmembers()}
 
 
 def seed_timestamped_objects(

@@ -2,23 +2,19 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from typing import override
 
 import pytest
-from s3_archiver_core.archive import run_archive
-from s3_archiver_core.archive_manifest import ManifestEntry
-from s3_archiver_core.archive_options import ArchiveOptions
-from s3_archiver_core.archive_transfer import (
-    FINGERPRINT_METADATA_KEY,
-    TransferStrategy,
-    archive_metadata,
-    fingerprint_from_metadata,
-    verify_destination,
-    verify_source_unchanged,
+from s3_archiver_core.archive import MANIFEST_SHA256_METADATA_KEY, group_metadata, run_archive
+from s3_archiver_core.archive_manifest import (
+    ManifestEntry,
+    SourcePathFilter,
+    build_archive_manifest,
 )
+from s3_archiver_core.archive_options import ArchiveOptions
 from s3_archiver_core.s3 import S3ObjectProperties, VersioningState
 
 from tests.unit.archive_workflow_fakes import FakeBucket
@@ -56,9 +52,8 @@ class SequenceClock:
         return STARTED
 
 
-def _entry(key: str = "old.txt") -> ManifestEntry:
-    listed = _listed(key, 90, None)
-    return ManifestEntry("source", key, 10, listed.last_modified, '"etag"', None, listed)
+def _target_key(name: str = "2024-02-20T00-00-00.txt") -> str:
+    return f"data/fae/2024/02/20/{name}"
 
 
 @pytest.mark.unit()
@@ -87,7 +82,7 @@ def test_run_archive_rejects_held_lock_and_releases_acquired_lock() -> None:
 
 @pytest.mark.unit()
 def test_run_archive_reports_timeout_after_copy_and_verify_phases() -> None:
-    source = FakeBucket("source", (_listed("old.txt", 90),))
+    source = FakeBucket("source", (_listed(_target_key(), 90),))
     batch_timeout = run_archive(
         source,
         FakeBucket("destination"),
@@ -102,7 +97,7 @@ def test_run_archive_reports_timeout_after_copy_and_verify_phases() -> None:
         FakeBucket("destination"),
         ArchiveOptions(retention_days=60),
         run_started_at_utc=STARTED,
-        clock=SequenceClock(expire_after_calls=3),
+        clock=SequenceClock(expire_after_calls=2),
     )
     assert copy_timeout.copy.failures == ("archive run timed out",)
     assert copy_timeout.verify.skipped is True
@@ -111,7 +106,7 @@ def test_run_archive_reports_timeout_after_copy_and_verify_phases() -> None:
         FakeBucket("destination"),
         ArchiveOptions(retention_days=60),
         run_started_at_utc=STARTED,
-        clock=SequenceClock(expire_after_calls=6),
+        clock=SequenceClock(expire_after_calls=4),
     )
     assert verify_timeout.copy.ok is True
     assert verify_timeout.verify.failures == ("archive run timed out",)
@@ -120,13 +115,13 @@ def test_run_archive_reports_timeout_after_copy_and_verify_phases() -> None:
 
 @pytest.mark.unit()
 def test_run_archive_reports_timeout_after_cleanup_phase() -> None:
-    source = FakeBucket("source", (_listed("old.txt", 90),))
+    source = FakeBucket("source", (_listed(_target_key(), 90),))
     result = run_archive(
         source,
         FakeBucket("destination"),
         ArchiveOptions(retention_days=60, cleanup_enabled=True),
         run_started_at_utc=STARTED,
-        clock=SequenceClock(expire_after_calls=9),
+        clock=SequenceClock(expire_after_calls=7),
     )
     assert result.copy.ok is True
     assert result.verify.ok is True
@@ -136,30 +131,20 @@ def test_run_archive_reports_timeout_after_cleanup_phase() -> None:
 @pytest.mark.unit()
 def test_verify_failure_after_copy_blocks_cleanup() -> None:
     class VanishingDestination(FakeBucket):
-        @override
-        def copy_from(
-            self,
-            source: object,
-            source_bucket: str,
-            source_key: str,
-            source_version_id: str | None,
-            properties: S3ObjectProperties,
-            destination_key: str,
-            destination_metadata: Mapping[str, str],
-            strategy: TransferStrategy,
-        ) -> None:
-            _ = (
-                source,
-                source_bucket,
-                source_version_id,
-                properties,
-                destination_key,
-                destination_metadata,
-                strategy,
-            )
-            self.copied.append(source_key)
+        head_calls: int
 
-    source = FakeBucket("source", (_listed("old.txt", 90),))
+        def __init__(self, bucket: str) -> None:
+            super().__init__(bucket)
+            self.head_calls = 0
+
+        @override
+        def head_object(self, key: str, version_id: str | None = None) -> S3ObjectProperties | None:
+            self.head_calls += 1
+            if self.head_calls >= 3:
+                return None
+            return super().head_object(key, version_id)
+
+    source = FakeBucket("source", (_listed(_target_key(), 90),))
     result = run_archive(
         source,
         VanishingDestination("destination"),
@@ -168,50 +153,76 @@ def test_verify_failure_after_copy_blocks_cleanup() -> None:
         clock=lambda: STARTED,
     )
     assert result.copy.ok is True
-    assert result.verify.failures == ("old.txt: destination missing",)
+    assert result.verify.failures == ("data/fae/2024-02-20.tar.gz: destination missing",)
     assert result.cleanup.skipped is True
 
 
 @pytest.mark.unit()
-def test_worker_future_exception_is_reported(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_cleanup_worker_future_exception_is_reported(monkeypatch: pytest.MonkeyPatch) -> None:
     def broken_call_worker(
         worker: Callable[[ManifestEntry], str | None], entry: ManifestEntry
     ) -> str | None:
-        _ = (worker, entry)
-        raise RuntimeError("executor failed")
+        _ = entry
+        if "_cleanup_phase" in worker.__qualname__:
+            raise RuntimeError("executor failed")
+        return worker(entry)
 
     monkeypatch.setattr("s3_archiver_core.archive_workers._call_worker", broken_call_worker)
     result = run_archive(
-        FakeBucket("source", (_listed("old.txt", 90),)),
+        FakeBucket("source", (_listed(_target_key(), 90),)),
         FakeBucket("destination"),
-        ArchiveOptions(retention_days=60),
+        ArchiveOptions(retention_days=60, cleanup_enabled=True),
         run_started_at_utc=STARTED,
         clock=lambda: STARTED,
     )
-    assert result.copy.failures == ("worker failure: executor failed",)
-    assert result.verify.skipped is True
+    assert result.copy.ok is True
+    assert result.verify.ok is True
+    assert result.cleanup.failures == ("worker failure: executor failed",)
 
 
 @pytest.mark.unit()
-def test_rerun_uses_archived_version_for_cleanup() -> None:
-    archived = _listed("old.txt", 95, "v1")
-    current = replace(_listed("old.txt", 90, "v2"), properties=archived.properties)
+def test_cleanup_uses_manifest_version_for_current_archive_group() -> None:
+    current = _listed(_target_key(), 90, "v2")
     source = FakeBucket(
         "source",
         (current,),
-        versions=(archived,),
-        version_payloads={("old.txt", "v1"): b"archived", ("old.txt", "v2"): b"current"},
+        version_payloads={(current.key, "v2"): b"current000"},
     )
-    archived_entry = ManifestEntry(
-        "source", "old.txt", 10, archived.last_modified, '"etag"', "v1", archived
+    result = run_archive(
+        source,
+        FakeBucket("destination"),
+        ArchiveOptions(retention_days=60, cleanup_enabled=True),
+        run_started_at_utc=STARTED,
+        clock=lambda: STARTED,
     )
+    assert result.manifest.entries[0].version_id == "v2"
+    assert result.ok is True
+    assert source.deleted == [(current.key, "v2")]
+
+
+@pytest.mark.unit()
+def test_existing_archive_with_different_manifest_metadata_blocks_cleanup() -> None:
+    listed = _listed(_target_key(), 90, "v1")
+    source = FakeBucket("source", (listed,))
+    manifest = build_archive_manifest(
+        source,
+        run_started_at_utc=STARTED,
+        retention_days=60,
+        versioning_state="Enabled",
+        source_filter=SourcePathFilter(),
+    )
+    archive_key = manifest.archive_groups[0].destination_archive_key
     destination = FakeBucket(
         "destination",
         destination={
-            "old.txt": replace(archived.properties, metadata=archive_metadata(archived_entry))
+            archive_key: replace(
+                listed.properties,
+                metadata=dict(group_metadata(manifest.archive_groups[0]))
+                | {MANIFEST_SHA256_METADATA_KEY: "different"},
+            )
         },
-        payloads={"old.txt": b"archived"},
     )
+
     result = run_archive(
         source,
         destination,
@@ -219,62 +230,11 @@ def test_rerun_uses_archived_version_for_cleanup() -> None:
         run_started_at_utc=STARTED,
         clock=lambda: STARTED,
     )
-    assert result.manifest.entries[0].version_id == "v2"
-    assert result.ok is True
-    assert destination.copied == []
-    assert source.deleted == [("old.txt", "v1")]
 
-
-@pytest.mark.unit()
-def test_verify_destination_reports_each_mismatch_detail() -> None:
-    entry = _entry()
-    destination = replace(entry.object.properties, metadata=archive_metadata(entry))
-    assert verify_destination(entry, None).detail == "destination missing"
-    assert (
-        verify_destination(entry, replace(destination, content_type="application/json")).detail
-        == "object property mismatch"
-    )
-    assert (
-        verify_destination(
-            entry,
-            replace(destination, metadata=dict(destination.metadata) | {"owner": "other"}),
-        ).detail
-        == "metadata mismatch"
-    )
-    assert (
-        verify_destination(entry, replace(destination, tags={"kind": "other"})).detail
-        == "tag mismatch"
-    )
-
-
-@pytest.mark.unit()
-def test_verify_source_unchanged_reports_missing_and_property_changes() -> None:
-    entry = _entry()
-    current = entry.object.properties
-    assert verify_source_unchanged(entry, None).detail == "source missing before cleanup"
-    assert verify_source_unchanged(entry, replace(current, size=11)).ok is False
-    assert verify_source_unchanged(entry, replace(current, content_type=None)).ok is False
-    assert verify_source_unchanged(entry, replace(current, metadata={"owner": "other"})).ok is False
-    assert verify_source_unchanged(entry, replace(current, tags={"kind": "other"})).ok is False
-    assert verify_source_unchanged(entry, current).ok is True
-
-
-def test_fingerprint_metadata_rejects_invalid_shapes() -> None:
-    metadata_key = FINGERPRINT_METADATA_KEY
-    assert fingerprint_from_metadata({metadata_key: "not-json"}) is None
-    assert fingerprint_from_metadata({metadata_key: "[]"}) is None
-    assert fingerprint_from_metadata({metadata_key: '{"source_bucket": 3}'}) is None
-    assert (
-        fingerprint_from_metadata(
-            {
-                metadata_key: (
-                    '{"source_bucket":"bucket","source_key":"key","source_size":1,'
-                    '"source_last_modified":"time","source_version_id":3,"source_etag":4}'
-                )
-            }
-        )
-        is not None
-    )
+    assert result.copy.failures == ()
+    assert result.skipped_archive_keys == (archive_key,)
+    assert result.cleanup.skipped is False
+    assert source.deleted == []
 
 
 @pytest.mark.unit()

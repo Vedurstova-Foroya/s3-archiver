@@ -10,6 +10,8 @@ from typing import Literal, Protocol, cast
 from s3_archiver_core.s3 import S3_CHUNK_BYTES, S3Client, S3ObjectProperties
 from s3_archiver_core.temp_files import TRANSFER_TEMP_PREFIX
 
+S3_MAX_MULTIPART_PARTS = 10_000
+
 S3TransferStrategy = Literal[
     "simple_native_copy", "multipart_native_copy", "multipart_streaming", "temp_file_backed"
 ]
@@ -80,6 +82,47 @@ def copy_s3_object(
     finally:
         if body is not None:
             _close_body(body)
+
+
+def upload_s3_file(
+    client: S3Client,
+    bucket: str,
+    key: str,
+    path: Path,
+    metadata: Mapping[str, str],
+    *,
+    content_type: str,
+) -> None:
+    """Upload a local file using S3 multipart upload for non-empty payloads."""
+
+    kwargs: dict[str, object] = {
+        "Bucket": bucket,
+        "Key": key,
+        "Metadata": dict(metadata),
+        "ContentType": content_type,
+    }
+    size = path.stat().st_size
+    if size == 0:
+        _ = client.put_object(**kwargs, Body=b"")
+        return
+    upload_id = _upload_id(client.create_multipart_upload(**kwargs))
+    try:
+        parts: list[dict[str, object]] = []
+        number = 1
+        with path.open("rb") as file:
+            while True:
+                chunk = file.read(_multipart_chunk_size(size))
+                if chunk == b"":
+                    break
+                response = client.upload_part(
+                    Bucket=bucket, Key=key, UploadId=upload_id, PartNumber=number, Body=chunk
+                )
+                parts.append(_part(number, response))
+                number += 1
+        _complete(client, bucket, key, upload_id, parts)
+    except Exception:
+        _ = client.abort_multipart_upload(Bucket=bucket, Key=key, UploadId=upload_id)
+        raise
 
 
 def _multipart_copy(
@@ -220,6 +263,10 @@ def _copy_source(bucket: str, key: str, version_id: str | None) -> dict[str, str
     if version_id is not None:
         source["VersionId"] = version_id
     return source
+
+
+def _multipart_chunk_size(size: int) -> int:
+    return max(S3_CHUNK_BYTES, (size + S3_MAX_MULTIPART_PARTS - 1) // S3_MAX_MULTIPART_PARTS)
 
 
 def _complete(

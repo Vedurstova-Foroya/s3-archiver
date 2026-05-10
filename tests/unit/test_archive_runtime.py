@@ -7,11 +7,10 @@ from datetime import UTC, datetime, timedelta
 from typing import override
 
 import pytest
-from s3_archiver_core.archive import run_archive
-from s3_archiver_core.archive_manifest import ManifestEntry
+from s3_archiver_core.archive import group_metadata, run_archive
+from s3_archiver_core.archive_manifest import SourcePathFilter, build_archive_manifest
 from s3_archiver_core.archive_options import ArchiveOptions
-from s3_archiver_core.archive_transfer import FINGERPRINT_METADATA_KEY, archive_metadata
-from s3_archiver_core.s3 import VersioningState
+from s3_archiver_core.s3 import S3ObjectProperties, VersioningState
 
 from tests.unit.archive_workflow_fakes import FakeBucket
 from tests.unit.archive_workflow_fakes import listed_object as _listed
@@ -24,35 +23,30 @@ def _clock() -> datetime:
     return STARTED
 
 
+def _target_key(name: str = "2024-02-20T00-00-00.txt") -> str:
+    return f"data/fae/2024/02/20/{name}"
+
+
 @pytest.mark.unit()
-def test_rerun_rejects_unversioned_destination_when_source_last_modified_changed() -> None:
-    archived_listed = replace(
-        _listed("old.txt", 90, None),
-        properties=_properties(
-            last_modified=datetime(2024, 1, 21, tzinfo=UTC),
-        ),
+def test_rerun_rejects_existing_archive_with_stale_manifest_metadata() -> None:
+    listed = _listed(_target_key(), 90, None)
+    source = FakeBucket("source", (listed,))
+    manifest = build_archive_manifest(
+        source,
+        run_started_at_utc=STARTED,
+        retention_days=60,
+        versioning_state="Enabled",
+        source_filter=SourcePathFilter(),
     )
-    stored_entry = ManifestEntry(
-        "source",
-        "old.txt",
-        10,
-        archived_listed.last_modified,
-        '"etag"',
-        None,
-        archived_listed,
-    )
-    current_listed = replace(
-        archived_listed,
-        last_modified=archived_listed.last_modified + timedelta(seconds=1),
-        properties=_properties(
-            last_modified=archived_listed.last_modified + timedelta(seconds=1),
-        ),
-    )
-    source = FakeBucket("source", (current_listed,))
+    archive_key = manifest.archive_groups[0].destination_archive_key
     destination = FakeBucket(
         "destination",
         destination={
-            "old.txt": replace(current_listed.properties, metadata=archive_metadata(stored_entry))
+            archive_key: replace(
+                listed.properties,
+                metadata=dict(group_metadata(manifest.archive_groups[0]))
+                | {"s3-archiver-manifest-sha256": "stale"},
+            )
         },
     )
 
@@ -64,12 +58,14 @@ def test_rerun_rejects_unversioned_destination_when_source_last_modified_changed
         clock=_clock,
     )
 
-    assert result.copy.failures == ("old.txt: source fingerprint mismatch",)
+    assert result.copy.failures == ()
+    assert result.skipped_archive_keys == (archive_key,)
 
 
 @pytest.mark.unit()
 def test_run_archive_orders_phases_and_gates_cleanup() -> None:
-    source = FakeBucket("source", (_listed("old.txt", 90, "v1"),))
+    key = _target_key()
+    source = FakeBucket("source", (_listed(key, 90, "v1"),))
     destination = FakeBucket("destination")
     decisions: list[tuple[str, str]] = []
     result = run_archive(
@@ -80,10 +76,12 @@ def test_run_archive_orders_phases_and_gates_cleanup() -> None:
         clock=_clock,
         debug_logger=lambda entry, strategy: decisions.append((entry.key, strategy)),
     )
+    archive_key = "data/fae/2024-02-20.tar.gz"
     assert result.ok is True
-    assert destination.copied == ["old.txt"]
+    assert destination.uploaded == [archive_key]
+    assert destination.copied == []
     assert source.deleted == []
-    assert decisions == [("old.txt", "simple_native_copy")]
+    assert decisions == [(key, "deterministic_tar_gzip")]
     assert result.cleanup.skipped is True
     cleanup_result = run_archive(
         source,
@@ -94,13 +92,15 @@ def test_run_archive_orders_phases_and_gates_cleanup() -> None:
     )
 
     assert cleanup_result.ok is True
-    assert source.deleted == [("old.txt", "v1")]
+    assert source.deleted == [(key, "v1")]
     assert cleanup_result.cleanup.skipped is False
 
 
 @pytest.mark.unit()
 def test_copy_or_verify_failure_blocks_later_phases() -> None:
-    source = FakeBucket("source", (_listed("old.txt", 90),))
+    key = _target_key()
+    archive_key = "data/fae/2024-02-20.tar.gz"
+    source = FakeBucket("source", (_listed(key, 90),))
     failing_destination = FakeBucket("destination")
     failing_destination.fail_copy = True
 
@@ -112,11 +112,11 @@ def test_copy_or_verify_failure_blocks_later_phases() -> None:
         clock=_clock,
     )
 
-    assert copy_failed.copy.ok is False
+    assert copy_failed.copy.failures == (f"{archive_key}: copy failed",)
     assert copy_failed.verify.skipped is True
     assert source.deleted == []
 
-    bad_destination = FakeBucket("destination", destination={"old.txt": _properties(size=10)})
+    bad_destination = FakeBucket("destination", destination={archive_key: _properties(size=10)})
     verify_failed = run_archive(
         source,
         bad_destination,
@@ -125,38 +125,43 @@ def test_copy_or_verify_failure_blocks_later_phases() -> None:
         clock=_clock,
     )
 
-    assert verify_failed.copy.failures == ("old.txt: source fingerprint mismatch",)
-    assert verify_failed.verify.skipped is True
+    assert verify_failed.copy.failures == ()
+    assert verify_failed.skipped_archive_keys == (archive_key,)
     assert source.deleted == []
 
-    listed = _listed("old.txt", 90)
-    entry = ManifestEntry("source", "old.txt", 10, listed.last_modified, '"etag"', "v1", listed)
-    metadata = archive_metadata(entry)
-    wrong_payload_destination = FakeBucket(
-        "destination",
-        destination={"old.txt": replace(entry.object.properties, metadata=metadata)},
-        payloads={"old.txt": b"different"},
-    )
-    content_failed = run_archive(
+    class MissingDuringVerify(FakeBucket):
+        head_calls: int
+
+        def __init__(self) -> None:
+            super().__init__("destination")
+            self.head_calls = 0
+
+        @override
+        def head_object(self, key: str, version_id: str | None = None) -> S3ObjectProperties | None:
+            self.head_calls += 1
+            if self.head_calls >= 3:
+                return None
+            return super().head_object(key, version_id)
+
+    verify_missing = run_archive(
         source,
-        wrong_payload_destination,
+        MissingDuringVerify(),
         ArchiveOptions(retention_days=60, cleanup_enabled=True, max_workers=1),
         run_started_at_utc=STARTED,
         clock=_clock,
     )
 
-    assert content_failed.copy.failures == ("old.txt: content mismatch",)
+    assert verify_missing.copy.ok is True
+    assert verify_missing.verify.failures == (f"{archive_key}: destination missing",)
     assert source.deleted == []
 
 
 @pytest.mark.unit()
-def test_concurrent_worker_failures_keep_object_key_for_reporting() -> None:
-    listed = replace(
-        _listed("old.txt", 90),
-        properties=_properties(metadata={FINGERPRINT_METADATA_KEY: "source-owned"}),
-    )
+def test_archive_upload_failure_keeps_archive_key_for_reporting() -> None:
+    listed = _listed(_target_key(), 90)
     source = FakeBucket("source", (listed,))
     destination = FakeBucket("destination")
+    destination.fail_copy = True
 
     result = run_archive(
         source,
@@ -166,9 +171,7 @@ def test_concurrent_worker_failures_keep_object_key_for_reporting() -> None:
         clock=_clock,
     )
 
-    assert result.copy.failures == (
-        f"old.txt: source metadata uses reserved key {FINGERPRINT_METADATA_KEY}",
-    )
+    assert result.copy.failures == ("data/fae/2024-02-20.tar.gz: copy failed",)
     assert result.verify.skipped is True
     assert source.deleted == []
 
@@ -176,7 +179,7 @@ def test_concurrent_worker_failures_keep_object_key_for_reporting() -> None:
 @pytest.mark.unit()
 def test_run_archive_timeout_blocks_later_phases() -> None:
     started = datetime(2024, 4, 20, tzinfo=UTC)
-    source = FakeBucket("source", (_listed("old.txt", 90),))
+    source = FakeBucket("source", (_listed(_target_key(), 90),))
     destination = FakeBucket("destination")
 
     timed_out = run_archive(
@@ -214,30 +217,29 @@ def test_list_failure_blocks_archive_phases() -> None:
 
 
 @pytest.mark.unit()
-def test_key_only_cleanup_rechecks_source_before_delete() -> None:
-    source = FakeBucket(
-        "source",
-        (_listed("old.txt", 90, None),),
-        destination={"old.txt": _properties(size=11)},
+def test_cleanup_does_not_recheck_source_last_modified_before_delete() -> None:
+    listed = replace(
+        _listed(_target_key(), 90, None),
+        properties=_properties(last_modified=datetime(2024, 2, 21, tzinfo=UTC)),
     )
-    destination = FakeBucket("destination")
+    source = FakeBucket("source", (listed,))
 
     result = run_archive(
         source,
-        destination,
+        FakeBucket("destination"),
         ArchiveOptions(retention_days=60, cleanup_enabled=True, max_workers=1),
         run_started_at_utc=STARTED,
         clock=_clock,
     )
 
-    assert result.cleanup.failures == ("old.txt: source changed before cleanup",)
-    assert source.deleted == []
+    assert result.ok is True
+    assert source.deleted == [(listed.key, None)]
 
 
 @pytest.mark.unit()
 def test_key_only_cleanup_deletes_when_current_source_still_matches() -> None:
-    listed = _listed("old.txt", 90, None)
-    source = FakeBucket("source", (listed,), destination={"old.txt": listed.properties})
+    listed = _listed(_target_key("2024-02-20T01-00-00.txt"), 90, None)
+    source = FakeBucket("source", (listed,))
     destination = FakeBucket("destination")
 
     result = run_archive(
@@ -249,4 +251,4 @@ def test_key_only_cleanup_deletes_when_current_source_still_matches() -> None:
     )
 
     assert result.ok is True
-    assert source.deleted == [("old.txt", None)]
+    assert source.deleted == [(listed.key, None)]

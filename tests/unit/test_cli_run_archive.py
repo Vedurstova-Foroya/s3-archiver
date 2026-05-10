@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import cast
 
 import pytest
+import s3_archiver_cli.error_logging as error_logging
 import s3_archiver_cli.main as cli_module
 from s3_archiver_core.archive import ArchivePhaseResult, ArchiveRunResult
 from s3_archiver_core.archive_manifest import ArchiveManifest
@@ -77,6 +78,85 @@ def test_run_archive_keeps_matching_run_id_and_releases_lock(
 
     assert payload["status"] == "ok"
     assert released == ["locked-run"]
+
+
+@pytest.mark.unit()
+def test_run_archive_preserves_group_state_when_rewriting_run_id(
+    monkeypatch: pytest.MonkeyPatch,
+    base_env: dict[str, str],
+) -> None:
+    monkeypatch.setattr(os, "environ", base_env)
+    settings = AppSettings.from_env(base_env)
+
+    class FixedUuid:
+        hex: str = "locked-run"
+
+    class RecordingLock:
+        def __init__(self, _path: Path, **_kwargs: object) -> None:
+            return
+
+        def acquire(self, *, run_id: str, run_started_at_utc: datetime, timeout: object) -> bool:
+            _ = (run_id, run_started_at_utc, timeout)
+            return True
+
+        def release(self, *, run_id: str) -> None:
+            _ = run_id
+
+    def run_health(_settings: AppSettings, _log_file: Path) -> object:
+        return object()
+
+    def build_client(_location: object) -> object:
+        return object()
+
+    def run_core_archive(
+        source: object,
+        destination: object,
+        options: object,
+        *,
+        run_started_at_utc: datetime,
+        debug_logger: object | None = None,
+    ) -> ArchiveRunResult:
+        _ = (source, destination, options, run_started_at_utc, debug_logger)
+        result = _archive_result(run_id="core-run")
+        return ArchiveRunResult(
+            result.run_id,
+            result.manifest,
+            result.copy,
+            result.verify,
+            result.cleanup,
+            result.list,
+            ("verified.tar.gz",),
+            ("skipped.tar.gz",),
+        )
+
+    def archive_result_payload(
+        status: str,
+        result: ArchiveRunResult,
+        _settings: AppSettings,
+        _log_file: Path,
+    ) -> dict[str, object]:
+        return {
+            "status": status,
+            "run_id": result.run_id,
+            "verified_archive_keys": list(result.verified_archive_keys),
+            "skipped_archive_keys": list(result.skipped_archive_keys),
+        }
+
+    monkeypatch.setattr(cli_module, "uuid4", lambda: FixedUuid())
+    monkeypatch.setattr(cli_module, "FileArchiveRunLock", RecordingLock)
+    monkeypatch.setattr(cli_module, "run_health_check", run_health)
+    monkeypatch.setattr(cli_module, "build_s3_client", build_client)
+    monkeypatch.setattr(cli_module, "run_archive", run_core_archive)
+    monkeypatch.setattr(error_logging, "archive_result_payload", archive_result_payload)
+
+    payload = _run_archive(settings, Path("/tmp/log"))
+    record_path = Path(base_env["LOG_DIR"]) / "archive-runs" / "locked-run.json"
+    record = cast(dict[str, object], json.loads(record_path.read_text(encoding="utf-8")))
+
+    assert payload["run_id"] == "locked-run"
+    assert payload["verified_archive_keys"] == ["verified.tar.gz"]
+    assert payload["skipped_archive_keys"] == ["skipped.tar.gz"]
+    assert cast(dict[str, object], record["payload"])["run_id"] == "locked-run"
 
 
 @pytest.mark.unit()

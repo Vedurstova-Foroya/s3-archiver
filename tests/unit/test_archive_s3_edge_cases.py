@@ -192,6 +192,14 @@ def test_s3_archive_bucket_list_and_head_coerce_s3_shapes() -> None:
 
 
 @pytest.mark.unit()
+def test_s3_archive_bucket_rejects_truncated_empty_unversioned_page() -> None:
+    bucket = S3ArchiveBucket(StaticPageClient({"IsTruncated": True, "Contents": []}), "source")
+
+    with pytest.raises(RuntimeError, match="truncated empty page"):
+        _ = tuple(bucket.list_source_objects("Disabled"))
+
+
+@pytest.mark.unit()
 def test_s3_archive_bucket_head_defaults_and_coerces_metadata() -> None:
     bucket = S3ArchiveBucket(
         HeadShapeClient({"ETag": 3, "Metadata": "bad"}),

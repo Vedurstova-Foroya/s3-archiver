@@ -8,7 +8,7 @@ import socket
 import subprocess
 import sys
 import textwrap
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TypedDict, cast
 
@@ -26,7 +26,8 @@ from tests.integration.localstack_harness import (
 from tests.integration.localstack_object_helpers import (
     listed_keys,
     localstack_s3_client,
-    seed_timestamped_objects,
+    put_test_object,
+    read_tar_gz_members_text,
 )
 
 
@@ -125,16 +126,11 @@ def test_schedule_retries_after_timeout_on_next_tick(
     settings = AppSettings.from_env(env)
     source_client = localstack_s3_client(env, "source")
     destination_client = localstack_s3_client(env, "destination")
-    seed_now = datetime.now(tz=UTC).replace(microsecond=0)
     prefix = "schedule-timeout"
-    key = f"{prefix}/age-61-days.txt"
-    seed_timestamped_objects(
-        source_client,
-        localstack_bucket_pair.source,
-        prefix=prefix,
-        days=(61,),
-        seed_now=seed_now,
-    )
+    target_day = (datetime.now(tz=UTC) - timedelta(days=60)).date()
+    key = f"{prefix}/{target_day}T00-00-00-retry.txt"
+    archive_key = f"{prefix}/{target_day}.tar.gz"
+    _ = put_test_object(source_client, localstack_bucket_pair.source, key)
     lock_path = settings.log_dir / "archive.lock"
     sleep_calls = 0
     command_calls = 0
@@ -198,7 +194,10 @@ def test_schedule_retries_after_timeout_on_next_tick(
     assert error_payload["timed_out"] is True
     assert command_calls == 2
     assert key in listed_keys(source_client, localstack_bucket_pair.source)
-    assert key in listed_keys(destination_client, localstack_bucket_pair.destination)
+    assert listed_keys(destination_client, localstack_bucket_pair.destination) == {archive_key}
+    assert read_tar_gz_members_text(
+        destination_client, localstack_bucket_pair.destination, archive_key
+    ) == {key: f"payload for {key}\n"}
     assert not lock_path.exists()
 
 
