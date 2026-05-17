@@ -66,8 +66,15 @@ def metadata_matches(existing: Mapping[str, str], expected: Mapping[str, str]) -
 
 
 def _group_manifest_sha256(group: ArchiveGroup) -> str:
-    rows = [
-        {
+    digest = hashlib.sha256()
+    digest.update(b"[")
+    first = True
+    for entry in sorted(group.entries, key=lambda item: item.key):
+        if first:
+            first = False
+        else:
+            digest.update(b",")
+        row = {
             "copy_mode": entry.copy_mode,
             "destination_archive_key": entry.destination_archive_key,
             "key": entry.key,
@@ -84,7 +91,6 @@ def _group_manifest_sha256(group: ArchiveGroup) -> str:
             ),
             "timestamp_source": entry.timestamp_source,
         }
-        for entry in sorted(group.entries, key=lambda item: item.key)
-    ]
-    payload = json.dumps(rows, sort_keys=True, separators=(",", ":")).encode()
-    return hashlib.sha256(payload).hexdigest()
+        digest.update(json.dumps(row, sort_keys=True, separators=(",", ":")).encode())
+    digest.update(b"]")
+    return digest.hexdigest()

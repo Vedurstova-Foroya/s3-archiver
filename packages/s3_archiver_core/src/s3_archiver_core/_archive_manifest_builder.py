@@ -33,7 +33,7 @@ from s3_archiver_core.parsers.results import TimestampSource
 from s3_archiver_core.s3 import S3ListedObject, VersioningState
 
 DEFAULT_ARCHIVE_GROUP_MAX_BYTES = 50 * 1024 * 1024 * 1024
-DEFAULT_ARCHIVE_GROUP_MAX_OBJECTS = 10_000
+DEFAULT_ARCHIVE_GROUP_MAX_OBJECTS = 2_000_000
 
 
 def build_archive_manifest(
