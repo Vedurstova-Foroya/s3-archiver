@@ -84,3 +84,14 @@ def test_intro_emits_multi_route_bucket_summary(base_env: dict[str, str]) -> Non
 
     assert "source buckets: archive-bucket, second-source-bucket" in lines
     assert "destination buckets: destination-bucket, second-destination-bucket" in lines
+    assert "== Working Set ==" in lines
+    assert (
+        "ROUTE  name=default parser=filename_timestamp copy_mode=daily_tar_gz "
+        + "source_bucket=archive-bucket source_path=(root) "
+        + "destination_bucket=destination-bucket destination_path=(root)"
+    ) in lines
+    assert (
+        "ROUTE  name=secondary parser=direct copy_mode=direct "
+        + "source_bucket=second-source-bucket source_path=raw/ "
+        + "destination_bucket=second-destination-bucket destination_path=mirror/"
+    ) in lines

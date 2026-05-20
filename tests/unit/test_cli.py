@@ -48,6 +48,11 @@ def test_check_command_emits_json(
     assert result.exit_code == 0
     payload = _load_payload(result.stdout)
     assert payload["status"] == "ok"
+    working_set = cast(dict[str, object], cast(object, _load_payload(result.stderr)))
+    assert working_set["event"] == "startup.working_set"
+    assert "access-key" not in result.stderr
+    assert "secret-key" not in result.stderr
+    assert "destination-secret" not in result.stderr
 
 
 @pytest.mark.unit()

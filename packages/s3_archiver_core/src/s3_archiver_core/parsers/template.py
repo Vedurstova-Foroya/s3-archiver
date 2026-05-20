@@ -5,7 +5,8 @@ Copy this file, rename the copy to a snake_case parser name such as
 that filename without ``.py`` in route config, for example
 ``"parser": "customer_timestamp"``. The parser registry automatically loads
 parser modules in this package that expose a ``Parser`` class. This template
-file itself is intentionally skipped.
+file itself is intentionally skipped. No registry, ``ParserKind``,
+``__init__.py``, or settings change is needed for the copied parser.
 """
 
 from __future__ import annotations

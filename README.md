@@ -115,13 +115,19 @@ Use explicit location fields only when a route differs from the env defaults. Fo
 ### Create A New Parser
 
 Custom parsers live in `packages/s3_archiver_core/src/s3_archiver_core/parsers`.
+The module filename is the parser name used in route config. Any non-template
+module in that package that exposes a callable `Parser` is discovered at
+startup. Parser discovery is cached for the running Python process, so restart
+the app after adding a parser; tests that create parser modules at runtime can
+call `clear_parser_registry_cache()`.
 
 1. Copy `packages/s3_archiver_core/src/s3_archiver_core/parsers/template.py`.
 2. Rename the copy to a snake_case parser name, for example `customer_timestamp.py`.
 3. Edit the sections marked `CHANGE HERE` in the copied file.
-4. Keep the parser class named `Parser`; the registry discovers it automatically.
-5. Use `"parser": "customer_timestamp"` in `ARCHIVER_CONFIG_JSON`.
-6. Run the targeted parser tests:
+4. Keep the parser class named `Parser`.
+5. Do not edit `parsers/kinds.py`, `parsers/__init__.py`, `parsers/registry.py`, or route settings for registration.
+6. Use `"parser": "customer_timestamp"` in `ARCHIVER_CONFIG_JSON`.
+7. Run the targeted parser tests:
 
 ```bash
 uv run pytest tests/unit/test_parsers.py tests/unit/test_route_config_settings.py -m unit

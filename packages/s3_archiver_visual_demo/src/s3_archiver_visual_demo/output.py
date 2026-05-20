@@ -15,7 +15,7 @@ from s3_archiver_core.archive_payloads import (
     skipped_object_payloads,
 )
 from s3_archiver_core.payload_utils import JsonValue
-from s3_archiver_core.route_payloads import route_summary_payload
+from s3_archiver_core.route_payloads import route_payloads, route_summary_payload
 from s3_archiver_core.settings import AppSettings
 
 type Emitter = Callable[[str], None]
@@ -33,10 +33,30 @@ def emit_intro(
 
     route_summary = route_summary_payload(settings)
     emit(title)
+    emit_working_set(emit, settings)
     emit(_bucket_summary("source", route_summary))
     emit(_bucket_summary("destination", route_summary))
     emit(f"log file: {log_file}")
     emit(f"run started at utc: {started.isoformat()}")
+
+
+def emit_working_set(emit: Emitter, settings: AppSettings) -> None:
+    """Emit the redacted route working set for this invocation."""
+
+    routes = route_payloads(settings)
+    emit("== Working Set ==")
+    emit(f"route count: {len(routes)}")
+    for route in routes:
+        emit(
+            "ROUTE  "
+            + f"name={route['name']} "
+            + f"parser={route['parser_kind']} "
+            + f"copy_mode={route['copy_mode']} "
+            + f"source_bucket={route['source_bucket']} "
+            + f"source_path={_path_text(route['source_path'])} "
+            + f"destination_bucket={route['destination_bucket']} "
+            + f"destination_path={_path_text(route['destination_path'])}"
+        )
 
 
 def emit_health(emit: Emitter, health: dict[str, JsonValue]) -> None:
@@ -206,6 +226,11 @@ def _bucket_summary(side: str, route_summary: dict[str, JsonValue]) -> str:
         return f"{side} bucket: {singular}"
     buckets = route_summary.get(f"{side}_buckets")
     return f"{side} buckets: {', '.join(str(bucket) for bucket in cast(list[JsonValue], buckets))}"
+
+
+def _path_text(value: JsonValue) -> str:
+    text = str(value)
+    return text if text else "(root)"
 
 
 def _archive_days(groups: list[dict[str, JsonValue]]) -> list[str]:

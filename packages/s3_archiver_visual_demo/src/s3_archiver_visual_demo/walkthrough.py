@@ -43,6 +43,7 @@ def run_visual_demo(
 
     clock = _utc_now if now is None else now
     started = clock()
+    _output.emit_intro(emit, settings, log_file, started)
     prepare_runtime_temp_dir(settings.temp_dir)
     health = cast(dict[str, JsonValue], run_health_check(settings, log_file).as_dict())
     routes = archive_routes_from_settings(settings, build_s3_client)
@@ -54,8 +55,6 @@ def run_visual_demo(
         eligible_keys=eligible_keys,
         planned_destinations=planned_destinations,
     )
-
-    _output.emit_intro(emit, settings, log_file, started)
     _output.emit_health(emit, health)
     _output.emit_snapshot(emit, "Before archive", before_snapshot)
     _output.emit_manifest(emit, manifest)

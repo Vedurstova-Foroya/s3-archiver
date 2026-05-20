@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import importlib
+import sys
 from collections.abc import Callable, Iterable, Mapping
 from datetime import UTC, datetime
+from pathlib import Path
 from types import ModuleType
 
 import pytest
@@ -51,17 +54,52 @@ def _listed(key: str, last_modified: datetime | None = None) -> S3ListedObject:
 
 
 @pytest.mark.unit()
-def test_registry_contains_only_supported_parser_kinds() -> None:
-    assert registered_parser_kinds() == {
+def test_registry_contains_builtin_parser_kinds() -> None:
+    kinds = registered_parser_kinds()
+
+    assert {
         ParserKind("direct"),
         ParserKind("filename_timestamp"),
         ParserKind("folder_timestamp"),
-    }
+    } <= kinds
     assert isinstance(parser_for_kind("direct"), DirectParser)
-    assert "template" not in {kind.value for kind in registered_parser_kinds()}
+    assert "template" not in {kind.value for kind in kinds}
     assert DirectParser().kind == ParserKind.DIRECT
     assert FilenameTimestampParser().kind == ParserKind.FILENAME_TIMESTAMP
     assert FolderTimestampParser().kind == ParserKind.FOLDER_TIMESTAMP
+
+
+@pytest.mark.unit()
+def test_registry_loads_copied_template_module_by_filename(tmp_path: Path) -> None:
+    package = tmp_path / "copied_parsers"
+    package.mkdir()
+    _ = (package / "__init__.py").write_text("", encoding="utf-8")
+    _ = (package / "customer_timestamp.py").write_text(
+        "\n".join(
+            (
+                "from s3_archiver_core.parsers.results import SelectedObject",
+                "",
+                "class Parser:",
+                "    def parse(self, listed, context=None):",
+                '        return SelectedObject(listed.last_modified, "last_modified", "")',
+                "",
+            )
+        ),
+        encoding="utf-8",
+    )
+    sys.path.insert(0, str(tmp_path))
+
+    try:
+        registry = discover_parser_factories(
+            ("copied_parsers.customer_timestamp",),
+            importlib.import_module,
+        )
+    finally:
+        sys.path.remove(str(tmp_path))
+        _ = sys.modules.pop("copied_parsers.customer_timestamp", None)
+        _ = sys.modules.pop("copied_parsers", None)
+
+    assert registry.keys() == {ParserKind("customer_timestamp")}
 
 
 @pytest.mark.unit()

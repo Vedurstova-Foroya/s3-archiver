@@ -39,7 +39,13 @@ Built-in parsers:
 
 Custom parsers can be added by copying `s3_archiver_core/parsers/template.py` to a new
 snake_case module in the parser package. Modules that expose a `Parser` class are
-registered automatically by filename, excluding the template itself.
+registered automatically by filename, excluding the template itself. The copied
+filename is the configured parser name, so `customer_timestamp.py` is selected
+with `"parser": "customer_timestamp"`. Do not edit `parsers/kinds.py`,
+`parsers/__init__.py`, `parsers/registry.py`, or settings to register a new parser.
+Discovery is cached for the running Python process, so restart the app after adding
+a parser; tests that create parser modules at runtime can call
+`clear_parser_registry_cache()`.
 
 Supported copy modes:
 

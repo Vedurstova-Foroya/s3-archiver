@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
+from typing import cast
 
 import pytest
 import s3_archiver_cli.main as cli_module
@@ -52,6 +54,10 @@ def test_archive_command_uses_timeout_enforced_wrapper(
     result = RUNNER.invoke(cli_module.app, ["archive"])
 
     assert result.exit_code == 0
+    working_set = cast(dict[str, object], json.loads(result.stderr))
+    assert working_set["event"] == "startup.working_set"
+    assert "secret-key" not in result.stderr
+    assert "destination-secret" not in result.stderr
     assert recorded_logs == [Path("/tmp/s3-archiver.log")]
     assert len(reconciled) == 1
 

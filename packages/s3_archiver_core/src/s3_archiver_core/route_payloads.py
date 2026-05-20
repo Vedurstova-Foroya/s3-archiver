@@ -43,6 +43,16 @@ def route_summary_payload(settings: AppSettings | None) -> dict[str, JsonValue]:
     }
 
 
+def working_set_payload(settings: AppSettings) -> dict[str, JsonValue]:
+    """Return the redacted startup working set for this invocation."""
+
+    routes = route_payloads(settings)
+    return {
+        "route_count": len(routes),
+        "routes": json_list(routes),
+    }
+
+
 def _string_json_values(items: list[str]) -> list[JsonValue]:
     return [cast(JsonValue, item) for item in items]
 

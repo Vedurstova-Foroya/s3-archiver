@@ -86,6 +86,26 @@ def test_archive_once_command_runs_core_workflow_with_lock(
     assert result.exit_code == 0
     payload = _load_payload(result.stdout)
     assert payload["status"] == "ok"
+    working_set = cast(dict[str, object], json.loads(result.stderr))
+    routes = cast(
+        list[dict[str, object]],
+        cast(dict[str, object], working_set["working_set"])["routes"],
+    )
+    assert working_set["event"] == "startup.working_set"
+    assert routes == [
+        {
+            "name": "default",
+            "parser_kind": "filename_timestamp",
+            "copy_mode": "daily_tar_gz",
+            "source_bucket": "archive-bucket",
+            "source_path": "",
+            "destination_bucket": "destination-bucket",
+            "destination_path": "",
+        }
+    ]
+    assert "access-key" not in result.stderr
+    assert "secret-key" not in result.stderr
+    assert "destination-secret" not in result.stderr
     assert payload.get("source_bucket") == "archive-bucket"
     assert payload.get("destination_bucket") == "destination-bucket"
     assert built_locations == ["archive-bucket", "destination-bucket"]

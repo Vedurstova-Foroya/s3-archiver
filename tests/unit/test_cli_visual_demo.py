@@ -108,6 +108,7 @@ def test_run_visual_demo_reports_bucket_story(
     assert before_archive["source_object_count"] == 2
     assert after_archive["destination_object_count"] == 1
     assert any("== Archive Candidates ==" in line for line in lines)
+    assert lines.index("== Working Set ==") < lines.index("== Preflight ==")
     assert any("source_last_modified=2024-02-19T00:00:00+00:00" in line for line in lines)
     assert not any("== Cleanup Preview ==" in line for line in lines)
     assert json.loads(lines[-1])["status"] == "ok"
