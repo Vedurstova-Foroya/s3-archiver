@@ -88,6 +88,9 @@ def test_schedule_command_runs_scheduled_archive_after_first_tick(
     assert isinstance(result.exception, RuntimeError)
     assert "stop scheduler test" in str(result.exception)
     assert events == ["reconcile", "sleep", "run"]
+    working_set = cast(dict[str, object], json.loads(result.stderr.splitlines()[0]))
+    assert working_set["event"] == "startup.working_set"
+    assert "secret-key" not in result.stderr
 
 
 @pytest.mark.unit()
@@ -130,7 +133,9 @@ def test_schedule_command_continues_after_child_error_on_later_tick(
     assert isinstance(result.exception, RuntimeError)
     assert "stop scheduler test" in str(result.exception)
     assert events == ["sleep-1", "run-1", "sleep-2", "run-2", "sleep-3"]
-    assert result.stderr == ""
+    stderr_lines = [line for line in result.stderr.splitlines() if line.strip()]
+    assert len(stderr_lines) == 1
+    assert cast(dict[str, object], json.loads(stderr_lines[0]))["event"] == "startup.working_set"
     assert _load_payload(result.stdout)["status"] == "ok"
 
 

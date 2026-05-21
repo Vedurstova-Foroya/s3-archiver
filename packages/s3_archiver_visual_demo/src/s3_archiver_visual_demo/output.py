@@ -15,7 +15,7 @@ from s3_archiver_core.archive_payloads import (
     skipped_object_payloads,
 )
 from s3_archiver_core.payload_utils import JsonValue
-from s3_archiver_core.route_payloads import route_payloads, route_summary_payload
+from s3_archiver_core.route_payloads import route_summary_payload, working_set_payload
 from s3_archiver_core.settings import AppSettings
 
 type Emitter = Callable[[str], None]
@@ -43,10 +43,10 @@ def emit_intro(
 def emit_working_set(emit: Emitter, settings: AppSettings) -> None:
     """Emit the redacted route working set for this invocation."""
 
-    routes = route_payloads(settings)
+    payload = working_set_payload(settings)
     emit("== Working Set ==")
-    emit(f"route count: {len(routes)}")
-    for route in routes:
+    emit(f"route count: {payload['route_count']}")
+    for route in cast(list[dict[str, JsonValue]], payload["routes"]):
         emit(
             "ROUTE  "
             + f"name={route['name']} "

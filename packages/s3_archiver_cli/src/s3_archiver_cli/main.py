@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import replace
@@ -57,7 +56,6 @@ app: typer.Typer = typer.Typer(add_completion=False, invoke_without_command=True
 CONFIG_ERROR_EXIT_CODE = 2
 LOGGING_ERROR_EXIT_CODE = 3
 HEALTH_CHECK_ERROR_EXIT_CODE = 4
-_WORKING_SET_EMITTED_ENV = "S3_ARCHIVER_WORKING_SET_EMITTED"
 
 
 @app.callback()
@@ -95,7 +93,7 @@ def archive() -> None:
         _raise_cli_error(exc, settings)
     if settings.archive_lock_path.exists():
         _ = reconcile_archive_lock(settings, recovery_logger=_log_lock_recovery)
-    exit_code = _run_archive_command_after_working_set(settings, log_file)
+    exit_code = _run_archive_command(settings, log_file)
     if exit_code != 0:
         raise typer.Exit(code=exit_code)
 
@@ -173,25 +171,11 @@ def _emit_cli_error(error: S3ArchiverError, settings: AppSettings | None) -> Non
 
 
 def _emit_working_set(settings: AppSettings) -> None:
-    if os.environ.get(_WORKING_SET_EMITTED_ENV) == "1":
-        return
     payload: dict[str, JsonValue] = {
         "event": "startup.working_set",
         "working_set": working_set_payload(settings),
     }
     typer.echo(json.dumps(payload, sort_keys=True), err=True)
-
-
-def _run_archive_command_after_working_set(settings: AppSettings, log_file: Path) -> int:
-    previous = os.environ.get(_WORKING_SET_EMITTED_ENV)
-    os.environ[_WORKING_SET_EMITTED_ENV] = "1"
-    try:
-        return _run_archive_command(settings, log_file)
-    finally:
-        if previous is None:
-            del os.environ[_WORKING_SET_EMITTED_ENV]
-        else:
-            os.environ[_WORKING_SET_EMITTED_ENV] = previous
 
 
 def _run_archive(settings: AppSettings, log_file: Path) -> dict[str, JsonValue]:
@@ -214,7 +198,6 @@ def _run_archive(settings: AppSettings, log_file: Path) -> dict[str, JsonValue]:
         prepare_runtime_temp_dir(settings.temp_dir)
         _ = run_health_check(settings, log_file)
         routes = archive_routes_from_settings(settings, build_s3_client)
-        _emit_working_set(settings)
         result = _run_configured_archive(settings, routes, started)
         if result.run_id != locked_run_id:
             result = replace(result, run_id=locked_run_id)
