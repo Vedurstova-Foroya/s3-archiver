@@ -58,7 +58,7 @@ def test_schedule_skips_immediate_replay_after_lock_refusal(
     active_lock = _start_active_lock(settings.log_dir / "archive.lock")
     sleep_calls = 0
 
-    def fake_sleep_until_tick(hour: int, minute: int) -> None:
+    def fake_sleep_until_tick(hour: int, minute: int, **_kwargs: object) -> None:
         nonlocal sleep_calls
         _ = (hour, minute)
         sleep_calls += 1
@@ -164,7 +164,7 @@ def test_schedule_retries_after_timeout_on_next_tick(
             return [sys.executable, "-c", timeout_probe]
         return archive_command()
 
-    def fake_sleep_until_tick(hour: int, minute: int) -> None:
+    def fake_sleep_until_tick(hour: int, minute: int, **_kwargs: object) -> None:
         nonlocal retry_seeded, sleep_calls
         _ = (hour, minute)
         sleep_calls += 1

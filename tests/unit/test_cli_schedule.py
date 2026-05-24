@@ -63,7 +63,7 @@ def test_schedule_command_runs_scheduled_archive_after_first_tick(
         events.append("reconcile")
         return True
 
-    def fake_sleep_until_tick(hour: int, minute: int) -> None:
+    def fake_sleep_until_tick(hour: int, minute: int, **_kwargs: object) -> None:
         nonlocal sleep_calls
         sleep_calls += 1
         if sleep_calls > 1:
@@ -106,7 +106,7 @@ def test_schedule_command_continues_after_child_error_on_later_tick(
     def configure(_settings: AppSettings) -> Path:
         return Path("/tmp/log")
 
-    def fake_sleep_until_tick(hour: int, minute: int) -> None:
+    def fake_sleep_until_tick(hour: int, minute: int, **_kwargs: object) -> None:
         nonlocal sleep_calls
         sleep_calls += 1
         events.append(f"sleep-{sleep_calls}")
@@ -167,7 +167,7 @@ def test_schedule_command_logs_child_domain_errors_and_keeps_looping(
     def configure(_settings: AppSettings) -> Path:
         return Path("/tmp/log")
 
-    def fake_sleep_until_tick(hour: int, minute: int) -> None:
+    def fake_sleep_until_tick(hour: int, minute: int, **_kwargs: object) -> None:
         nonlocal sleep_calls
         sleep_calls += 1
         assert (hour, minute) == (4, 5)

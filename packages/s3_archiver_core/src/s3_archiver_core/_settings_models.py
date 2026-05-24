@@ -27,6 +27,7 @@ class CopyMode(StrEnum):
 
     DIRECT = "direct"
     DAILY_TAR_GZ = "daily_tar_gz"
+    TIMESTAMP_CHILD_TAR_GZ = "timestamp_child_tar_gz"
 
 
 @dataclass(frozen=True, slots=True)

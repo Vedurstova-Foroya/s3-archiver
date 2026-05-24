@@ -15,6 +15,7 @@ from s3_archiver_core.parsers import SelectedObject, SkippedObject
 from s3_archiver_core.parsers.direct import DirectParser
 from s3_archiver_core.parsers.filename_timestamp import FilenameTimestampParser
 from s3_archiver_core.parsers.folder_timestamp import FolderTimestampParser
+from s3_archiver_core.parsers.folder_timestamp_child import FolderTimestampChildParser
 from s3_archiver_core.parsers.kinds import ParserKind
 from s3_archiver_core.parsers.protocol import ParserContext
 from s3_archiver_core.parsers.registry import (
@@ -60,6 +61,7 @@ def test_registry_contains_builtin_parser_kinds() -> None:
     assert {
         ParserKind("direct"),
         ParserKind("filename_timestamp"),
+        ParserKind("folder_timestamp_child"),
         ParserKind("folder_timestamp"),
     } <= kinds
     assert isinstance(parser_for_kind("direct"), DirectParser)
@@ -67,6 +69,7 @@ def test_registry_contains_builtin_parser_kinds() -> None:
     assert DirectParser().kind == ParserKind.DIRECT
     assert FilenameTimestampParser().kind == ParserKind.FILENAME_TIMESTAMP
     assert FolderTimestampParser().kind == ParserKind.FOLDER_TIMESTAMP
+    assert FolderTimestampChildParser().kind == ParserKind("folder_timestamp_child")
 
 
 @pytest.mark.unit()
@@ -244,3 +247,28 @@ def test_folder_parser_selects_folder_timestamp_without_basename_fallback() -> N
         "data/fae",
     )
     assert basename_only == SkippedObject("no reliable folder timestamp")
+
+
+@pytest.mark.unit()
+def test_folder_timestamp_child_parser_groups_by_first_child_after_timestamp() -> None:
+    parser = FolderTimestampChildParser()
+
+    selected = parser.parse(_listed("data/wrf/ecmwf/2026/05/16/00/d01/out.grib"))
+    nested = parser.parse(_listed("data/wrf/ecmwf/2026/05/16/00/d01/nested/out.grib"))
+    no_child = parser.parse(_listed("data/wrf/gfs/2025/02/01/out.grib"))
+    invalid_day = parser.parse(_listed("data/wrf/ecmwf/2026/02/31/00/d01/out.grib"))
+    basename_only = parser.parse(_listed("data/fae/2026-04-13T07-00-00Z.xml"))
+
+    assert selected == SelectedObject(
+        datetime(2026, 5, 16, tzinfo=UTC),
+        "path",
+        "data/wrf/ecmwf/2026/05/16/00/d01",
+    )
+    assert nested == SelectedObject(
+        datetime(2026, 5, 16, tzinfo=UTC),
+        "path",
+        "data/wrf/ecmwf/2026/05/16/00/d01",
+    )
+    assert no_child == SkippedObject("no reliable folder timestamp child")
+    assert invalid_day == SkippedObject("no reliable folder timestamp child")
+    assert basename_only == SkippedObject("no reliable folder timestamp child")

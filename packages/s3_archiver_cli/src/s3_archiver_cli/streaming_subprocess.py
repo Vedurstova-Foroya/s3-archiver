@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import subprocess
 from collections.abc import Callable
@@ -11,6 +12,8 @@ from typing import IO
 from s3_archiver_core.settings import AppSettings
 
 type Echo = Callable[[str], None]
+
+PIPE_JOIN_TIMEOUT_SECONDS = 30.0
 
 
 def run_streaming_command(
@@ -59,6 +62,17 @@ def _relay_pipe(pipe: IO[str] | None, echo: Echo) -> None:
             echo(line)
 
 
-def _join_pipe_threads(*threads: Thread) -> None:
+def _join_pipe_threads(
+    *threads: Thread, timeout_seconds: float = PIPE_JOIN_TIMEOUT_SECONDS
+) -> None:
+    logger = logging.getLogger("s3_archiver.archive")
     for thread in threads:
-        thread.join()
+        thread.join(timeout=timeout_seconds)
+        if thread.is_alive():
+            logger.warning(
+                "archive subprocess pipe thread did not exit",
+                extra={
+                    "event": "archive.subprocess.pipe_thread_timeout",
+                    "timeout_seconds": timeout_seconds,
+                },
+            )

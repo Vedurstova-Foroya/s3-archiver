@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import sqlite3
 import tempfile
+import threading
+import weakref
 from collections.abc import Iterator
 from contextlib import suppress
 from pathlib import Path
@@ -152,17 +154,7 @@ class SQLiteManifestStore:
             return count_entries(self._connection)
 
     def entry_count_by_copy_mode(self, copy_mode: str) -> int:
-        with self._connection_lock:
-            row = required_row(
-                cast(
-                    object,
-                    self._connection.execute(
-                        "SELECT COUNT(*) FROM entries WHERE copy_mode = ?",
-                        (copy_mode,),
-                    ).fetchone(),
-                )
-            )
-        return int(cast(int, row[0]))
+        return self._scalar_int("SELECT COUNT(*) FROM entries WHERE copy_mode = ?", (copy_mode,))
 
     def skipped_count(self) -> int:
         with self._connection_lock:
@@ -174,13 +166,11 @@ class SQLiteManifestStore:
         return self._group_count
 
     def _calculate_group_count(self) -> int:
+        return self._scalar_int("SELECT COUNT(*) FROM archive_chunks")
+
+    def _scalar_int(self, query: str, params: tuple[object, ...] = ()) -> int:
         with self._connection_lock:
-            row = required_row(
-                cast(
-                    object,
-                    self._connection.execute("SELECT COUNT(*) FROM archive_chunks").fetchone(),
-                )
-            )
+            row = required_row(cast(object, self._connection.execute(query, params).fetchone()))
         return int(cast(int, row[0]))
 
     def target_days(self) -> tuple[str, ...]:
@@ -192,7 +182,8 @@ class SQLiteManifestStore:
                         """
                     SELECT DISTINCT target_day
                     FROM entries
-                    WHERE copy_mode = 'daily_tar_gz' AND target_day != ''
+                    WHERE copy_mode IN ('daily_tar_gz', 'timestamp_child_tar_gz')
+                        AND target_day != ''
                     ORDER BY target_day
                     """
                     )
@@ -200,16 +191,7 @@ class SQLiteManifestStore:
             )
 
     def entry_size_sum(self) -> int:
-        with self._connection_lock:
-            row = required_row(
-                cast(
-                    object,
-                    self._connection.execute(
-                        "SELECT COALESCE(SUM(size), 0) FROM entries",
-                    ).fetchone(),
-                )
-            )
-        return int(cast(int, row[0]))
+        return self._scalar_int("SELECT COALESCE(SUM(size), 0) FROM entries")
 
     def iter_entries(self) -> Iterator[ManifestEntry]:
         connection = self._reader_connection()
@@ -275,7 +257,19 @@ class SQLiteManifestStore:
             if connection is None:
                 connection = sqlite3.connect(self.path, check_same_thread=False)
                 self._reader_connections[thread_id] = connection
+                _ = weakref.finalize(
+                    threading.current_thread(),
+                    self._reap_reader_connection,
+                    thread_id,
+                )
             return connection
+
+    def _reap_reader_connection(self, thread_id: int) -> None:
+        with self._connection_lock:
+            connection = self._reader_connections.pop(thread_id, None)
+        if connection is not None:
+            with suppress(Exception):
+                connection.close()
 
     def _create_schema(self) -> None:
         create_schema(self._connection)

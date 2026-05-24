@@ -22,8 +22,10 @@ RUN uv sync --frozen --all-packages --all-groups
 FROM python:3.12-slim AS runtime
 ARG APP_UID=10001
 ARG APP_GID=10001
+ARG PIP_VERSION=25.0.1
 ENV PATH="/opt/venv/bin:${PATH}" \
-    PIP_NO_CACHE_DIR=1
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
 ENV LOG_DIR=/var/log/s3-archiver
 WORKDIR /app
 RUN groupadd --gid "${APP_GID}" app \
@@ -31,7 +33,8 @@ RUN groupadd --gid "${APP_GID}" app \
     && python -m venv /opt/venv \
     && mkdir -p /var/log/s3-archiver
 COPY --from=builder /dist /dist
-RUN /opt/venv/bin/pip install /dist/*.whl \
+RUN /opt/venv/bin/pip install --no-cache-dir "pip==${PIP_VERSION}" \
+    && /opt/venv/bin/pip install /dist/*.whl \
     && rm -rf /dist \
     && chown -R app:app /app /var/log/s3-archiver
 USER app:app

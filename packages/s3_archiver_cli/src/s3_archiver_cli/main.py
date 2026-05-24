@@ -34,22 +34,28 @@ from s3_archiver_core.temp_files import prepare_runtime_temp_dir
 
 from s3_archiver_cli import archive_run_records as _run_records
 from s3_archiver_cli import error_logging as _error_logging
-from s3_archiver_cli import scheduled_archive as _scheduled_archive
 from s3_archiver_cli.archive_lock_reporting import log_lock_recovery as _log_lock_recovery
 from s3_archiver_cli.archive_progress_reporting import ArchiveProgressReporter
 from s3_archiver_cli.archive_progress_reporting import (
     include_archive_payload_details as _include_archive_payload_details,
 )
 from s3_archiver_cli.env import load_runtime_env as _load_runtime_env
-
-type ReconcileArchiveLock = Callable[..., bool]
-type RunArchiveSubprocess = Callable[..., int]
-type RunScheduledArchive = Callable[..., None]
+from s3_archiver_cli.schedule_runtime import (
+    ShutdownFlag,
+    install_schedule_signals,
+    log_lock_reconcile_failed,
+    restore_schedule_signals,
+    run_schedule_loop,
+)
+from s3_archiver_cli.scheduled_archive import (
+    parse_daily_at_utc,
+    reconcile_archive_lock,
+    run_archive_subprocess,
+    run_scheduled_archive,
+    sleep_until_next_daily_tick,
+)
 
 _log_error_payload = _error_logging.log_error_payload
-reconcile_archive_lock: ReconcileArchiveLock = _scheduled_archive.reconcile_archive_lock
-run_archive_subprocess: RunArchiveSubprocess = _scheduled_archive.run_archive_subprocess
-run_scheduled_archive: RunScheduledArchive = _scheduled_archive.run_scheduled_archive
 
 
 app: typer.Typer = typer.Typer(add_completion=False, invoke_without_command=True)
@@ -119,13 +125,23 @@ def schedule(
     except S3ArchiverError as exc:
         _raise_cli_error(exc, settings)
     hour, minute = _parse_daily_at_utc(daily_at_utc)
-    _ = reconcile_archive_lock(settings, recovery_logger=_log_lock_recovery)
-    while True:
-        _sleep_until_next_daily_tick(hour, minute)
-        try:
-            run_scheduled_archive(settings, log_file, recovery_logger=_log_lock_recovery)
-        except S3ArchiverError as exc:
-            _emit_cli_error(exc, settings)
+    if not reconcile_archive_lock(settings, recovery_logger=_log_lock_recovery):
+        log_lock_reconcile_failed()
+    flag = ShutdownFlag()
+    previous = install_schedule_signals(flag)
+    try:
+        run_schedule_loop(
+            flag,
+            run_once=lambda: run_scheduled_archive(
+                settings, log_file, recovery_logger=_log_lock_recovery
+            ),
+            sleep_until_next_tick=lambda backoff: _sleep_until_next_daily_tick(
+                hour, minute, extra_delay_seconds=backoff
+            ),
+            report_error=lambda exc: _emit_cli_error(exc, settings),
+        )
+    finally:
+        restore_schedule_signals(previous)
 
 
 def main() -> None:
@@ -183,17 +199,12 @@ def _run_archive(settings: AppSettings, log_file: Path) -> dict[str, JsonValue]:
     locked_run_id = uuid4().hex
     run_lock = FileArchiveRunLock(settings.archive_lock_path, recovery_logger=_log_lock_recovery)
     if not run_lock.acquire(
-        run_id=locked_run_id,
-        run_started_at_utc=started,
-        timeout=settings.run_timeout,
+        run_id=locked_run_id, run_started_at_utc=started, timeout=settings.run_timeout
     ):
         raise ArchiveRunError("archive run lock is already held")
     try:
         _run_records.record_started(
-            settings,
-            run_id=locked_run_id,
-            run_started_at_utc=started,
-            log_file=log_file,
+            settings, run_id=locked_run_id, run_started_at_utc=started, log_file=log_file
         )
         prepare_runtime_temp_dir(settings.temp_dir)
         _ = run_health_check(settings, log_file)
@@ -202,9 +213,7 @@ def _run_archive(settings: AppSettings, log_file: Path) -> dict[str, JsonValue]:
         if result.run_id != locked_run_id:
             result = replace(result, run_id=locked_run_id)
     except Exception as exc:
-        error: S3ArchiverError = (
-            exc if isinstance(exc, S3ArchiverError) else ArchiveRunError(str(exc))
-        )
+        error = exc if isinstance(exc, S3ArchiverError) else ArchiveRunError(str(exc))
         _run_records.record_failure(
             settings,
             run_id=locked_run_id,
@@ -217,25 +226,22 @@ def _run_archive(settings: AppSettings, log_file: Path) -> dict[str, JsonValue]:
         raise error from exc
     finally:
         run_lock.release(run_id=locked_run_id)
-    include_payload_details = _include_archive_payload_details()
-    payload = (
-        _error_logging.archive_result_payload(
-            "ok",
-            result,
-            settings,
-            log_file,
-            include_details=include_payload_details,
-        )
-        if result.ok
-        else _error_logging.archive_failure_payload(
-            result,
-            settings,
-            log_file,
-            include_details=include_payload_details,
-        )
-    )
+    payload = _archive_result_payload(result, settings, log_file)
     _run_records.record_result(settings, result=result, payload=payload, log_file=log_file)
     return payload
+
+
+def _archive_result_payload(
+    result: ArchiveRunResult, settings: AppSettings, log_file: Path
+) -> dict[str, JsonValue]:
+    include_details = _include_archive_payload_details()
+    if result.ok:
+        return _error_logging.archive_result_payload(
+            "ok", result, settings, log_file, include_details=include_details
+        )
+    return _error_logging.archive_failure_payload(
+        result, settings, log_file, include_details=include_details
+    )
 
 
 def _run_archive_command(settings: AppSettings, log_file: Path) -> int:
@@ -245,24 +251,21 @@ def _run_archive_command(settings: AppSettings, log_file: Path) -> int:
 def _run_configured_archive(
     settings: AppSettings, routes: tuple[ArchiveRoute, ...], started: datetime
 ) -> ArchiveRunResult:
-    debug_logger = _log_transfer_decision if settings.log_level == "DEBUG" else None
-    progress_logger = ArchiveProgressReporter()
     return run_archive(
         routes,
         run_timeout=settings.run_timeout,
         run_started_at_utc=started,
-        debug_logger=debug_logger,
-        progress_logger=progress_logger,
+        debug_logger=_log_transfer_decision if settings.log_level == "DEBUG" else None,
+        progress_logger=ArchiveProgressReporter(),
     )
 
 
 def _emit_archive_payload(payload: Mapping[str, JsonValue]) -> bool:
-    if payload.get("status") == "error":
+    is_error = payload.get("status") == "error"
+    if is_error:
         _log_error_payload(payload)
-        typer.echo(json.dumps(payload, sort_keys=True), err=True)
-        return False
-    typer.echo(json.dumps(payload, sort_keys=True))
-    return True
+    typer.echo(json.dumps(payload, sort_keys=True), err=is_error)
+    return not is_error
 
 
 def _log_transfer_decision(entry: ManifestEntry, strategy: str) -> None:
@@ -278,14 +281,20 @@ def _log_transfer_decision(entry: ManifestEntry, strategy: str) -> None:
 
 
 def _parse_daily_at_utc(value: str) -> tuple[int, int]:
-    return _scheduled_archive.parse_daily_at_utc(value)
+    return parse_daily_at_utc(value)
 
 
-def _sleep_until_next_daily_tick(hour: int, minute: int) -> None:
-    _scheduled_archive.sleep_until_next_daily_tick(
+def _sleep_until_next_daily_tick(
+    hour: int,
+    minute: int,
+    *,
+    extra_delay_seconds: float = 0.0,
+) -> None:
+    sleep_until_next_daily_tick(
         hour,
         minute,
         now=lambda: datetime.now(tz=UTC),
         logger=logging.getLogger("s3_archiver.archive"),
         sleep=time.sleep,
+        extra_delay_seconds=extra_delay_seconds,
     )

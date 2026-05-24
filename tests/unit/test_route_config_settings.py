@@ -107,7 +107,7 @@ def test_from_env_expands_route_env_refs_with_defaults(tmp_path: Path) -> None:
 )
 def test_from_env_rejects_invalid_route_enums(
     tmp_path: Path,
-    route_update: dict[str, str],
+    route_update: dict[str, object],
     message: str,
 ) -> None:
     route = _route()

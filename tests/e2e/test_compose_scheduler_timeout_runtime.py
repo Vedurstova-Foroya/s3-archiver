@@ -44,7 +44,7 @@ def test_compose_scheduler_reports_timeout_then_retries_on_next_tick(
             "time.sleep(10)"
         )
 
-        def fake_sleep(hour: int, minute: int) -> None:
+        def fake_sleep(hour: int, minute: int, **_kwargs) -> None:
             state["sleep_calls"] += 1
             events.append(f"sleep-{state['sleep_calls']}:{hour:02d}:{minute:02d}")
             if state["sleep_calls"] == 2:

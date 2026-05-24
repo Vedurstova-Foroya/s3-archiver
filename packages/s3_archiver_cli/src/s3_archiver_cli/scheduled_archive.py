@@ -71,9 +71,23 @@ def sleep_until_next_daily_tick(
     now: Callable[[], datetime],
     logger: Logger,
     sleep: Callable[[float], None] = time.sleep,
+    extra_delay_seconds: float = 0.0,
 ) -> None:
-    """Sleep until the next UTC daily schedule tick."""
+    """Sleep until the next UTC daily schedule tick.
 
+    ``extra_delay_seconds`` adds an additional backoff sleep before the
+    scheduled wait, used by the scheduler after consecutive failures.
+    """
+
+    if extra_delay_seconds > 0.0:
+        _ = logger.info(
+            "archive schedule backoff before next tick",
+            extra={
+                "event": "archive.schedule.backoff",
+                "delay_seconds": max(int(extra_delay_seconds), 0),
+            },
+        )
+        _ = sleep(extra_delay_seconds)
     current = now()
     target = current.replace(hour=hour, minute=minute, second=0, microsecond=0)
     if target <= current:

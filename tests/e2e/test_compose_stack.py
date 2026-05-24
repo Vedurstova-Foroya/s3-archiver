@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import textwrap
 from pathlib import Path
@@ -220,7 +221,7 @@ def test_compose_scheduler_service_runs_schedule_command(
     compose_env: dict[str, str],
 ) -> None:
     result = subprocess.run(
-        ["docker", "compose", "--profile", "test", "--profile", "schedule", "config", "scheduler"],
+        ["docker", "compose", "--profile", "test", "config", "scheduler"],
         cwd=REPO_ROOT,
         env=compose_env,
         check=True,
@@ -235,23 +236,44 @@ def test_compose_scheduler_service_runs_schedule_command(
 
 
 @pytest.mark.e2e()
-def test_compose_services_fail_closed_without_explicit_app_env_file() -> None:
+def test_compose_services_default_to_dotenv_when_app_env_file_unset(tmp_path: Path) -> None:
+    _ = shutil.copy(REPO_ROOT / "compose.yaml", tmp_path / "compose.yaml")
+    _ = (tmp_path / ".env").write_text("", encoding="utf-8")
     env = os.environ.copy()
     _ = env.pop("APP_ENV_FILE", None)
     _ = env.pop("ENV_FILE", None)
 
     result = subprocess.run(
-        ["docker", "compose", "--profile", "test", "--profile", "schedule", "config"],
-        cwd=REPO_ROOT,
+        ["docker", "compose", "config"],
+        cwd=tmp_path,
         env=env,
         check=True,
         capture_output=True,
         text=True,
     )
 
-    assert "APP_ENV_FILE: /dev/null" in result.stdout
+    assert "APP_ENV_FILE: .env" in result.stdout
     assert "ARCHIVER_CONFIG_JSON:" in result.stdout
-    assert "path: .env" not in result.stdout
+
+
+@pytest.mark.e2e()
+def test_compose_services_fail_when_env_file_missing(tmp_path: Path) -> None:
+    _ = shutil.copy(REPO_ROOT / "compose.yaml", tmp_path / "compose.yaml")
+    env = os.environ.copy()
+    _ = env.pop("APP_ENV_FILE", None)
+    _ = env.pop("ENV_FILE", None)
+
+    result = subprocess.run(
+        ["docker", "compose", "config"],
+        cwd=tmp_path,
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode != 0
+    assert ".env" in result.stderr
 
 
 def _run_compose(

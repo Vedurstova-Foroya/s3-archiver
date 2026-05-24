@@ -35,7 +35,10 @@ Built-in parsers:
 
 - `filename_timestamp`: selects objects with reliable UTC timestamps in the source key basename.
 - `folder_timestamp`: selects objects with reliable UTC timestamps in parent folders.
+- `folder_timestamp_child`: selects segmented folder timestamps followed by a child folder, for layouts such as `data/wrf/ecmwf/2026/05/16/00/d01/<object>`.
 - `direct`: selects objects from S3 `LastModified`.
+
+The repository-level `docs/parsers.md` file documents parser behavior, copy modes, and example route choices in more detail.
 
 Custom parsers can be added by copying `s3_archiver_core/parsers/template.py` to a new
 snake_case module in the parser package. Modules that expose a `Parser` class are
@@ -50,6 +53,7 @@ a parser; tests that create parser modules at runtime can call
 Supported copy modes:
 
 - `daily_tar_gz`: groups selected objects by route, archive root, and data day, then writes deterministic `.tar.gz` archives.
+- `timestamp_child_tar_gz`: for `folder_timestamp_child` routes, groups selected objects by route, archive root, and data day, then writes archive names from the selected timestamp hour plus child folder, such as `2026-05-16-00-d01.tar.gz`.
 - `direct`: copies each selected object to the destination path.
 
 Route names must be unique, source and destination storage identities must differ, and OCI locations require `namespace` and `iam_user_ocid`. Source paths are validated per storage location with directory-boundary prefix semantics, so sibling prefixes such as `data` and `database` are separate routes while `data` and `data/fae` overlap.

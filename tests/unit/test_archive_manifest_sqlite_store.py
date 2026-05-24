@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import gc
 import sqlite3
+import threading
 from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import cast
@@ -167,7 +169,13 @@ def test_sqlite_helpers_cover_error_edges() -> None:
         _ = chunk_row_at(connection, 0)
     assert list(iter_group_rows(connection, "route")) == []
     assert (
-        list(iter_group_entries(connection, ("route", "", "2026-04-13", "bucket", "key", ""))) == []
+        list(
+            iter_group_entries(
+                connection,
+                ("route", "daily_tar_gz", "", "2026-04-13", "bucket", "key", ""),
+            )
+        )
+        == []
     )
 
 
@@ -192,6 +200,37 @@ def test_archive_group_helpers_cover_chunk_edges(monkeypatch: pytest.MonkeyPatch
     assert sizer.would_overflow(-1) is False
     sizer.add(-1)
     assert sizer.has_items is True
+
+
+@pytest.mark.unit()
+def test_sqlite_manifest_store_reaps_reader_connection_after_thread_exit(
+    tmp_path: Path,
+) -> None:
+    store = SQLiteManifestStore(tmp_path / "reap.sqlite3")
+    try:
+        store.add_entry(_entry("data/one.xml"))
+        store.commit()
+
+        worker_ident: list[int] = []
+
+        def worker() -> None:
+            worker_ident.append(threading.get_ident())
+            for _ in store.iter_entries():
+                pass
+
+        thread = threading.Thread(target=worker)
+        thread.start()
+        thread.join()
+        worker_id = worker_ident[0]
+        assert worker_id in store._reader_connections  # pyright: ignore[reportPrivateUsage]
+
+        del thread
+        _ = gc.collect()
+        assert worker_id not in store._reader_connections  # pyright: ignore[reportPrivateUsage]
+
+        store._reap_reader_connection(thread_id=-1)  # pyright: ignore[reportPrivateUsage]
+    finally:
+        store.cleanup()
 
 
 @pytest.mark.unit()

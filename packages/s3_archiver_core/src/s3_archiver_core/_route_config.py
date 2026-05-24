@@ -105,6 +105,8 @@ def _load_route(decoder: EnvDecoder, item: object, field: str) -> RouteSettings 
     )
     if name is None or parser is None or copy_mode is None or source is None or destination is None:
         return None
+    if not _validate_parser_copy_mode(decoder, parser, copy_mode, f"{field}.copy_mode"):
+        return None
     _validate_localstack_endpoint_host(decoder, f"{field}.source.endpoint_url", source)
     _validate_localstack_endpoint_host(decoder, f"{field}.destination.endpoint_url", destination)
     return RouteSettings(name, parser, copy_mode, source, destination)
@@ -140,6 +142,21 @@ def _load_copy_mode(
         decoder.fail(field, f"{field} must be one of {valid}, got {value!r}")
         return None
     return CopyMode(value)
+
+
+def _validate_parser_copy_mode(
+    decoder: EnvDecoder, parser: ParserKind, copy_mode: CopyMode, field: str
+) -> bool:
+    folder_timestamp_child = ParserKind("folder_timestamp_child")
+    if copy_mode is CopyMode.TIMESTAMP_CHILD_TAR_GZ and parser != folder_timestamp_child:
+        decoder.fail(field, f"{field} requires parser=folder_timestamp_child")
+        return False
+    if parser == folder_timestamp_child and copy_mode is not CopyMode.TIMESTAMP_CHILD_TAR_GZ:
+        decoder.fail(
+            field, f"{field} must be timestamp_child_tar_gz for parser=folder_timestamp_child"
+        )
+        return False
+    return True
 
 
 def _load_location(

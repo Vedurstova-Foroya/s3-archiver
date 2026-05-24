@@ -56,6 +56,7 @@ def create_schema(connection: sqlite3.Connection) -> None:
         CREATE TABLE archive_chunks (
             id INTEGER PRIMARY KEY,
             route_name TEXT NOT NULL,
+            copy_mode TEXT NOT NULL,
             archive_root TEXT NOT NULL,
             target_day TEXT NOT NULL,
             destination_bucket TEXT NOT NULL,
@@ -74,7 +75,7 @@ def create_schema(connection: sqlite3.Connection) -> None:
         );
         CREATE INDEX entries_route_copy_idx ON entries(route_name, copy_mode);
         CREATE INDEX entries_group_idx ON entries(
-            route_name, archive_root, target_day, destination_bucket,
+            route_name, copy_mode, archive_root, target_day, destination_bucket,
             destination_archive_key, destination_identity, key, id
         );
         CREATE INDEX archive_chunks_route_idx ON archive_chunks(route_name);

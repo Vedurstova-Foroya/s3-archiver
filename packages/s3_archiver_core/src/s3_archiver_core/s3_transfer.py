@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import tempfile
 from collections.abc import Mapping
 from pathlib import Path
@@ -115,7 +116,7 @@ def upload_s3_file(
                 number += 1
         _complete(client, bucket, key, upload_id, parts)
     except Exception:
-        _ = client.abort_multipart_upload(Bucket=bucket, Key=key, UploadId=upload_id)
+        _safe_abort_multipart(client, bucket, key, upload_id)
         raise
 
 
@@ -145,7 +146,7 @@ def _multipart_copy(
             parts.append(_part(number, response))
         _complete(client, bucket, key, upload_id, parts)
     except Exception:
-        _ = client.abort_multipart_upload(Bucket=bucket, Key=key, UploadId=upload_id)
+        _safe_abort_multipart(client, bucket, key, upload_id)
         raise
     _put_tags(client, bucket, key, properties.tags)
 
@@ -179,9 +180,25 @@ def _upload_stream(
             number += 1
         _complete(client, bucket, key, upload_id, parts)
     except Exception:
-        _ = client.abort_multipart_upload(Bucket=bucket, Key=key, UploadId=upload_id)
+        _safe_abort_multipart(client, bucket, key, upload_id)
         raise
     _put_tags(client, bucket, key, properties.tags)
+
+
+def _safe_abort_multipart(client: S3Client, bucket: str, key: str, upload_id: str) -> None:
+    try:
+        _ = client.abort_multipart_upload(Bucket=bucket, Key=key, UploadId=upload_id)
+    except Exception:
+        logging.getLogger("s3_archiver.archive").warning(
+            "multipart abort failed",
+            extra={
+                "event": "archive.multipart.abort_failed",
+                "bucket": bucket,
+                "key": key,
+                "upload_id": upload_id,
+            },
+            exc_info=True,
+        )
 
 
 def _stage(body: ReadableBody, temp_dir: Path) -> Path:

@@ -7,12 +7,14 @@ from typing import final
 
 from s3_archiver_core._archive_env import positive_int_env
 from s3_archiver_core._archive_identity import stable_identity_value
-from s3_archiver_core._archive_manifest_models import ArchiveGroup, ManifestEntry
+from s3_archiver_core._archive_manifest_models import ArchiveGroup, CopyMode, ManifestEntry
 
 DEFAULT_ARCHIVE_GROUP_MAX_BYTES = 100 * 1024 * 1024 * 1024
 DEFAULT_ARCHIVE_GROUP_MAX_OBJECTS = 2_000_000
 
-type _ArchiveGroupKey = tuple[str, str, date, str, str, str]
+_ARCHIVE_COPY_MODES = frozenset({"daily_tar_gz", "timestamp_child_tar_gz"})
+
+type _ArchiveGroupKey = tuple[str, CopyMode, str, date, str, str, str]
 
 
 def archive_groups(entries: Iterable[ManifestEntry]) -> tuple[ArchiveGroup, ...]:
@@ -20,10 +22,11 @@ def archive_groups(entries: Iterable[ManifestEntry]) -> tuple[ArchiveGroup, ...]
 
     grouped_entries: dict[_ArchiveGroupKey, list[ManifestEntry]] = {}
     for entry in entries:
-        if entry.copy_mode != "daily_tar_gz" or entry.target_day is None:
+        if entry.copy_mode not in _ARCHIVE_COPY_MODES or entry.target_day is None:
             continue
         key = (
             entry.route_name,
+            entry.copy_mode,
             entry.archive_root,
             entry.target_day,
             entry.destination_bucket,

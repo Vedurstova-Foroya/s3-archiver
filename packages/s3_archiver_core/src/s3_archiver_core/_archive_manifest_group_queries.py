@@ -6,7 +6,7 @@ from datetime import date
 from typing import cast, final, overload, override
 
 from s3_archiver_core._archive_manifest_digest import ManifestDigestBuilder
-from s3_archiver_core._archive_manifest_models import ArchiveGroup, ManifestEntry
+from s3_archiver_core._archive_manifest_models import ArchiveGroup, CopyMode, ManifestEntry
 from s3_archiver_core._archive_manifest_slices import slice_items
 from s3_archiver_core._archive_manifest_sqlite import (
     iter_sql_rows,
@@ -18,20 +18,20 @@ from s3_archiver_core._archive_manifest_sqlite import (
 )
 
 _GROUP_WHERE = """
-route_name = ? AND archive_root = ? AND target_day = ?
+route_name = ? AND copy_mode = ? AND archive_root = ? AND target_day = ?
 AND destination_bucket = ? AND destination_archive_key = ?
-AND destination_identity = ? AND copy_mode = 'daily_tar_gz'
+AND destination_identity = ?
 """
 _GROUP_ENTRY_ORDER = "key, id"
 _CHUNK_COLUMNS = (
-    "route_name, archive_root, target_day, destination_bucket, "
+    "route_name, copy_mode, archive_root, target_day, destination_bucket, "
     "destination_archive_key, destination_identity, parser_kind, "
     "source_bucket, source_identity_payload, destination_identity_payload, "
     "chunk_index, entry_offset, entry_count, chunk_destination_key, "
     "source_count, manifest_sha256"
 )
 _CHUNK_ORDER = (
-    "route_name, archive_root, target_day, destination_bucket, "
+    "route_name, copy_mode, archive_root, target_day, destination_bucket, "
     "destination_archive_key, destination_identity, chunk_index"
 )
 type ConnectionProvider = Callable[[], sqlite3.Connection]
@@ -42,21 +42,21 @@ def iter_group_rows(
     route_name: str | None = None,
 ) -> Iterator[tuple[object, ...]]:
     params: tuple[object, ...] = ()
-    where = "copy_mode = 'daily_tar_gz' AND target_day != ''"
+    where = "copy_mode IN ('daily_tar_gz', 'timestamp_child_tar_gz') AND target_day != ''"
     if route_name is not None:
         where += " AND route_name = ?"
         params = (route_name,)
     rows = connection.execute(
         """
-        SELECT route_name, archive_root, target_day, destination_bucket,
+        SELECT route_name, copy_mode, archive_root, target_day, destination_bucket,
             destination_archive_key, destination_identity
         FROM entries
         WHERE """
         + where
         + """
-        GROUP BY route_name, archive_root, target_day, destination_bucket,
+        GROUP BY route_name, copy_mode, archive_root, target_day, destination_bucket,
             destination_archive_key, destination_identity
-        ORDER BY route_name, archive_root, target_day, destination_bucket,
+        ORDER BY route_name, copy_mode, archive_root, target_day, destination_bucket,
             destination_archive_key, destination_identity
         """,
         params,
@@ -75,12 +75,12 @@ def rebuild_archive_chunks(connection: sqlite3.Connection) -> None:
             _ = connection.execute(
                 """
                 INSERT INTO archive_chunks (
-                    route_name, archive_root, target_day, destination_bucket,
+                    route_name, copy_mode, archive_root, target_day, destination_bucket,
                     destination_archive_key, destination_identity, parser_kind,
                     source_bucket, source_identity_payload, destination_identity_payload,
                     chunk_index, entry_offset, entry_count, chunk_destination_key,
                     source_count, manifest_sha256
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     *row,
@@ -91,7 +91,7 @@ def rebuild_archive_chunks(connection: sqlite3.Connection) -> None:
                     chunk_index,
                     offset,
                     length,
-                    archive_chunk_key(str(row[4]), chunk_index),
+                    archive_chunk_key(str(row[5]), chunk_index),
                     length,
                     digest,
                 ),
@@ -115,24 +115,24 @@ def group_from_chunk_row(
     connection_provider: ConnectionProvider,
     row: tuple[object, ...],
 ) -> ArchiveGroup:
-    chunk_index = int(cast(int, row[10]))
-    offset = int(cast(int, row[11]))
-    length = int(cast(int, row[12]))
-    entries = SQLiteGroupEntrySequence(connection_provider, row[:6], chunk_index, offset, length)
+    chunk_index = int(cast(int, row[11]))
+    offset = int(cast(int, row[12]))
+    length = int(cast(int, row[13]))
+    entries = SQLiteGroupEntrySequence(connection_provider, row[:7], chunk_index, offset, length)
     return ArchiveGroup(
         target_day=_target_day(row),
-        archive_root=str(row[1]),
-        destination_archive_key=str(row[13]),
+        archive_root=str(row[2]),
+        destination_archive_key=str(row[14]),
         entries=entries,
         route_name=str(row[0]),
-        parser_kind=str(row[6]),
-        copy_mode="daily_tar_gz",
-        source_bucket=str(row[7]),
-        source_identity=unpack(cast(bytes, row[8])),
-        destination_bucket=str(row[3]),
-        destination_identity=unpack(cast(bytes, row[9])),
-        source_count=int(cast(int, row[14])),
-        manifest_sha256=str(row[15]),
+        parser_kind=str(row[7]),
+        copy_mode=cast(CopyMode, row[1]),
+        source_bucket=str(row[8]),
+        source_identity=unpack(cast(bytes, row[9])),
+        destination_bucket=str(row[4]),
+        destination_identity=unpack(cast(bytes, row[10])),
+        source_count=int(cast(int, row[15])),
+        manifest_sha256=str(row[16]),
     )
 
 
@@ -233,7 +233,7 @@ def _iter_group_entry_rows(
 
 
 def _target_day(row: tuple[object, ...]) -> date:
-    value = str(row[2])
+    value = str(row[3])
     return date.fromisoformat(value)
 
 

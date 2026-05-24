@@ -166,7 +166,10 @@ class _ManifestBuildContext:
         destination_key = (
             join_key(self.destination_path, listed.key)
             if self.copy_mode == "direct"
-            else join_key(self.destination_path, destination_archive_key(root, target_day))
+            else join_key(
+                self.destination_path,
+                self._archive_destination_key(root, target_day, selected_timestamp),
+            )
         )
         return ManifestEntry(
             source_bucket=self.source.bucket,
@@ -191,6 +194,13 @@ class _ManifestBuildContext:
             source_identity=self.source_identity,
             destination_identity=self.destination_identity,
         )
+
+    def _archive_destination_key(
+        self, archive_root: str, target_day: date, selected_timestamp: datetime
+    ) -> str:
+        if self.copy_mode == "timestamp_child_tar_gz":
+            return timestamp_child_archive_key(archive_root, selected_timestamp)
+        return destination_archive_key(archive_root, target_day)
 
     def skipped_object(
         self,
@@ -239,3 +249,11 @@ def _list_source_objects(
             Callable[[VersioningState], Iterable[S3ListedObject]], source.list_source_objects
         )
         return legacy_lister(versioning_state)
+
+
+def timestamp_child_archive_key(archive_root: str, selected_timestamp: datetime) -> str:
+    child = archive_root.rstrip("/").rsplit("/", maxsplit=1)[-1]
+    if not child:
+        child = "archive"
+    timestamp = selected_timestamp.strftime("%Y-%m-%d-%H")
+    return f"{timestamp}-{child}.tar.gz"

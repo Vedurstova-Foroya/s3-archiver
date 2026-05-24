@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import cast, final, override
@@ -10,7 +11,7 @@ import pytest
 from botocore.exceptions import ClientError
 from s3_archiver_core import s3_transfer as transfer_module
 from s3_archiver_core.archive_s3 import S3ArchiveBucket
-from s3_archiver_core.s3 import S3_CHUNK_BYTES, S3ObjectProperties
+from s3_archiver_core.s3 import S3_CHUNK_BYTES, S3Client, S3ObjectProperties
 
 from tests.unit.archive_s3_fakes import FakeArchiveClient, copy_object, properties
 
@@ -127,3 +128,51 @@ def _multipart_chunk_size(size: int) -> int:
         Callable[[int], int],
         transfer_module.__dict__["_multipart_chunk_size"],
     )(size)
+
+
+class AbortFailingClient(FakeArchiveClient):
+    @override
+    def abort_multipart_upload(self, **kwargs: object) -> Mapping[str, object]:
+        _ = kwargs
+        raise RuntimeError("abort failed")
+
+
+@pytest.mark.unit()
+def test_safe_abort_multipart_logs_warning_when_abort_raises() -> None:
+    records: list[logging.LogRecord] = []
+    logger = logging.getLogger("s3_archiver.archive")
+    handler = _RecordHandler(records)
+    handler.setLevel(logging.WARNING)
+    logger.addHandler(handler)
+    try:
+        client = cast(S3Client, cast(object, AbortFailingClient()))
+        transfer_module._safe_abort_multipart(client, "bucket", "key", "upload-id")  # pyright: ignore[reportPrivateUsage]
+    finally:
+        logger.removeHandler(handler)
+    events = [record for record in records if record.message == "multipart abort failed"]
+    assert len(events) == 1
+    extras = events[0].__dict__
+    assert extras["event"] == "archive.multipart.abort_failed"
+    assert extras["upload_id"] == "upload-id"
+
+
+@pytest.mark.unit()
+def test_safe_abort_multipart_returns_quietly_when_abort_succeeds() -> None:
+    client = FakeArchiveClient()
+    transfer_module._safe_abort_multipart(  # pyright: ignore[reportPrivateUsage]
+        cast(S3Client, cast(object, client)), "bucket", "key", "upload-id"
+    )
+    assert client.abort_calls == [{"Bucket": "bucket", "Key": "key", "UploadId": "upload-id"}]
+
+
+class _RecordHandler(logging.Handler):
+    records: list[logging.LogRecord]
+
+    def __init__(self, records: list[logging.LogRecord]) -> None:
+        super().__init__()
+        self.records = records
+
+    @override
+    def emit(self, record: logging.LogRecord) -> None:
+        record.message = record.getMessage()
+        self.records.append(record)
