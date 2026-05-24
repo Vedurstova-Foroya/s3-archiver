@@ -124,6 +124,38 @@ def test_parse_env_file_rejects_invalid_assignment(tmp_path: Path) -> None:
 
 
 @pytest.mark.unit()
+def test_parse_env_file_supports_multi_line_quoted_value(tmp_path: Path) -> None:
+    env_file = tmp_path / ".env"
+    _ = env_file.write_text(
+        "\n".join(
+            (
+                "ARCHIVER_CONFIG_JSON='[",
+                "  {",
+                '    "name": "demo"',
+                "  }",
+                "]'",
+                "LOG_LEVEL=INFO",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    parsed = PARSE_ENV_FILE(env_file)
+
+    assert parsed["LOG_LEVEL"] == "INFO"
+    assert parsed["ARCHIVER_CONFIG_JSON"] == '[\n  {\n    "name": "demo"\n  }\n]'
+
+
+@pytest.mark.unit()
+def test_parse_env_file_rejects_unterminated_quoted_value(tmp_path: Path) -> None:
+    env_file = tmp_path / ".env"
+    _ = env_file.write_text("ARCHIVER_CONFIG_JSON='[\n  {\n", encoding="utf-8")
+
+    with pytest.raises(ConfigError, match="Unterminated quoted value for ARCHIVER_CONFIG_JSON"):
+        _ = PARSE_ENV_FILE(env_file)
+
+
+@pytest.mark.unit()
 def test_checked_in_env_example_is_valid_route_config() -> None:
     env = PARSE_ENV_FILE(Path(".env.example"))
 

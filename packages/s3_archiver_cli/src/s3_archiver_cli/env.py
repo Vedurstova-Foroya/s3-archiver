@@ -28,10 +28,14 @@ def selected_env_file() -> Path:
 
 
 def parse_env_file(path: Path) -> dict[str, str]:
-    """Parse simple KEY=VALUE env files."""
+    """Parse KEY=VALUE env files, supporting quoted multi-line values."""
 
     loaded: dict[str, str] = {}
-    for line_number, raw_line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+    lines = path.read_text(encoding="utf-8").splitlines()
+    index = 0
+    while index < len(lines):
+        raw_line = lines[index]
+        index += 1
         stripped = raw_line.strip()
         if stripped == "" or stripped.startswith("#"):
             continue
@@ -39,9 +43,29 @@ def parse_env_file(path: Path) -> dict[str, str]:
             stripped = stripped.removeprefix("export ").strip()
         key, separator, raw_value = stripped.partition("=")
         if separator == "" or key.strip() == "":
-            raise ConfigError(f"Invalid env assignment in {path}:{line_number}")
-        loaded[key.strip()] = strip_optional_quotes(raw_value.strip())
+            raise ConfigError(f"Invalid env assignment in {path}:{index}")
+        value, consumed = _read_value(raw_value.strip(), lines, index)
+        if consumed is None:
+            raise ConfigError(
+                f"Unterminated quoted value for {key.strip()} starting at {path}:{index}"
+            )
+        index = consumed
+        loaded[key.strip()] = strip_optional_quotes(value)
     return loaded
+
+
+def _read_value(first: str, lines: list[str], index: int) -> tuple[str, int | None]:
+    quote = first[:1] if first[:1] in {"'", '"'} else None
+    if quote is None or (len(first) >= 2 and first.endswith(quote)):
+        return first, index
+    collected = [first]
+    while index < len(lines):
+        next_line = lines[index]
+        index += 1
+        collected.append(next_line)
+        if next_line.rstrip().endswith(quote):
+            return "\n".join(collected), index
+    return "", None
 
 
 def strip_optional_quotes(value: str) -> str:
