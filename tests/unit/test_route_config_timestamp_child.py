@@ -91,8 +91,10 @@ def _env(tmp_path: Path, route: dict[str, object]) -> dict[str, str]:
     return {
         "ARCHIVER_CONFIG_JSON": json.dumps([route]),
         "LOG_DIR": str(tmp_path / "logs"),
-        "S3_SOURCE_ACCESS_KEY_ID": "source-access",
-        "S3_SOURCE_SECRET_ACCESS_KEY": "source-secret",
-        "S3_DESTINATION_ACCESS_KEY_ID": "destination-access",
-        "S3_DESTINATION_SECRET_ACCESS_KEY": "destination-secret",
+        "S3_SOURCE_ACCESS_KEY": "source-access",
+        "S3_SOURCE_SECRET_KEY": "source-secret",
+        "S3_SOURCE_ENDPOINT": "http://localhost:4566",
+        "S3_DESTINATION_ACCESS_KEY": "destination-access",
+        "S3_DESTINATION_SECRET_KEY": "destination-secret",
+        "S3_DESTINATION_ENDPOINT": "http://localhost:4567",
     }

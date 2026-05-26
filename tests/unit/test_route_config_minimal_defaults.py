@@ -30,8 +30,8 @@ def _shared_env(tmp_path: Path, routes: list[dict[str, object]]) -> dict[str, st
         "ARCHIVER_CONFIG_JSON": json.dumps(routes),
         "S3_PROVIDER": "localstack",
         "S3_REGION": "us-east-1",
-        "S3_ACCESS_KEY_ID": "shared-access",
-        "S3_SECRET_ACCESS_KEY": "shared-secret",
+        "S3_ACCESS_KEY": "shared-access",
+        "S3_SECRET_KEY": "shared-secret",
         "LOG_DIR": str(tmp_path / "logs"),
     }
 
@@ -53,8 +53,8 @@ def test_from_env_decodes_minimal_route_with_shared_s3_defaults(tmp_path: Path) 
 @pytest.mark.unit()
 def test_from_env_prefers_side_specific_defaults_over_shared_defaults(tmp_path: Path) -> None:
     env = _shared_env(tmp_path, [_minimal_route()])
-    env["S3_SOURCE_ACCESS_KEY_ID"] = "source-access"
-    env["S3_DESTINATION_SECRET_ACCESS_KEY"] = "destination-secret"
+    env["S3_SOURCE_ACCESS_KEY"] = "source-access"
+    env["S3_DESTINATION_SECRET_KEY"] = "destination-secret"
     env["S3_DESTINATION_REGION"] = "eu-frankfurt-1"
 
     settings = AppSettings.from_env(env)
@@ -74,8 +74,8 @@ def test_from_env_prefers_explicit_route_location_over_env_defaults(tmp_path: Pa
     source["endpoint_url"] = "http://localstack-alt:4566"
     env = _shared_env(tmp_path, [route])
     env["S3_SOURCE_REGION"] = "env-region"
-    env["S3_SOURCE_ACCESS_KEY_ID"] = "env-access"
-    env["S3_SOURCE_ENDPOINT_URL"] = "http://localstack:4566"
+    env["S3_SOURCE_ACCESS_KEY"] = "env-access"
+    env["S3_SOURCE_ENDPOINT"] = "http://localstack:4566"
 
     settings = AppSettings.from_env(env)
 
@@ -87,7 +87,7 @@ def test_from_env_prefers_explicit_route_location_over_env_defaults(tmp_path: Pa
 @pytest.mark.unit()
 def test_from_env_rejects_minimal_route_missing_required_fallback(tmp_path: Path) -> None:
     env = _shared_env(tmp_path, [_minimal_route()])
-    _ = env.pop("S3_ACCESS_KEY_ID")
+    _ = env.pop("S3_ACCESS_KEY")
 
     with pytest.raises(ConfigError, match="access_key_id"):
         _ = AppSettings.from_env(env)

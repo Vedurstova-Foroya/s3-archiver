@@ -30,18 +30,18 @@ def test_compose_file_uses_readable_archiver_config_block() -> None:
     )
     assert route["source"] == {
         "bucket": "$${S3_SOURCE_BUCKET:-source-bucket}",
-        "access_key_id": "$${S3_ACCESS_KEY_ID:-test}",
-        "secret_access_key": "$${S3_SECRET_ACCESS_KEY:-test}",
+        "access_key_id": "$${S3_ACCESS_KEY:-test}",
+        "secret_access_key": "$${S3_SECRET_KEY:-test}",
     }
     assert route["destination"] == {
         "bucket": "$${S3_DESTINATION_BUCKET:-destination-bucket}",
-        "access_key_id": "$${S3_ACCESS_KEY_ID:-test}",
-        "secret_access_key": "$${S3_SECRET_ACCESS_KEY:-test}",
+        "access_key_id": "$${S3_ACCESS_KEY:-test}",
+        "secret_access_key": "$${S3_SECRET_KEY:-test}",
     }
     for service_name in ("app", "scheduler"):
         environment = _compose_environment(compose_text, service_name)
-        assert "S3_ACCESS_KEY_ID" not in environment
-        assert "S3_SECRET_ACCESS_KEY" not in environment
+        assert "S3_ACCESS_KEY" not in environment
+        assert "S3_SECRET_KEY" not in environment
     assert "ARCHIVER_RETENTION_DAYS" not in compose_text
     assert "ARCHIVER_ENABLE_CLEANUP" not in compose_text
     assert "ARCHIVER_MAX_WORKERS" not in compose_text

@@ -115,18 +115,18 @@ def localstack_test_env(
     env = {
         "APP_ENV_FILE": "/dev/null",
         "S3_SOURCE_PROVIDER": "localstack",
-        "S3_SOURCE_ACCESS_KEY_ID": "source-test",
-        "S3_SOURCE_SECRET_ACCESS_KEY": "source-test",
+        "S3_SOURCE_ACCESS_KEY": "source-test",
+        "S3_SOURCE_SECRET_KEY": "source-test",
         "S3_SOURCE_REGION": "us-east-1",
         "S3_SOURCE_BUCKET": bucket_pair.source,
-        "S3_SOURCE_ENDPOINT_URL": endpoint,
+        "S3_SOURCE_ENDPOINT": endpoint,
         "S3_SOURCE_ADDRESSING_STYLE": "path",
         "S3_DESTINATION_PROVIDER": "localstack",
-        "S3_DESTINATION_ACCESS_KEY_ID": "destination-test",
-        "S3_DESTINATION_SECRET_ACCESS_KEY": "destination-test",
+        "S3_DESTINATION_ACCESS_KEY": "destination-test",
+        "S3_DESTINATION_SECRET_KEY": "destination-test",
         "S3_DESTINATION_REGION": "us-east-1",
         "S3_DESTINATION_BUCKET": bucket_pair.destination,
-        "S3_DESTINATION_ENDPOINT_URL": endpoint,
+        "S3_DESTINATION_ENDPOINT": endpoint,
         "S3_DESTINATION_ADDRESSING_STYLE": "path",
         "ARCHIVER_CONFIG_JSON": _localstack_config_json(bucket_pair, endpoint=endpoint),
         "ARCHIVER_RUN_TIMEOUT": "7d",
@@ -186,7 +186,7 @@ def assert_localstack_test_target(env: Mapping[str, str]) -> None:
     for field in ("S3_SOURCE_PROVIDER", "S3_DESTINATION_PROVIDER"):
         if env.get(field) != "localstack":
             raise RuntimeError(f"{field} must be 'localstack' for integration/e2e tests")
-    for field in ("S3_SOURCE_ENDPOINT_URL", "S3_DESTINATION_ENDPOINT_URL"):
+    for field in ("S3_SOURCE_ENDPOINT", "S3_DESTINATION_ENDPOINT"):
         _assert_localstack_endpoint(field, env.get(field))
 
 

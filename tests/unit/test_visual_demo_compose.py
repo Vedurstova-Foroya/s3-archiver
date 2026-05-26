@@ -114,7 +114,7 @@ def test_demo_client_and_bucket_helpers(monkeypatch: pytest.MonkeyPatch, tmp_pat
     clients: list[object] = []
 
     def fake_localstack_s3_client(env: dict[str, str], side: str) -> object:
-        clients.append((env["S3_SOURCE_ENDPOINT_URL"], side))
+        clients.append((env["S3_SOURCE_ENDPOINT"], side))
         return object()
 
     def fake_admin_client(_settings: object) -> object:

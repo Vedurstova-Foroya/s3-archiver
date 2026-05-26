@@ -166,7 +166,7 @@ def _load_location(
     if location is None:
         return None
     provider_text = _location_string(
-        decoder, location, "provider", f"{field}.provider", side, default="localstack"
+        decoder, location, "provider", f"{field}.provider", side, default="custom"
     )
     if provider_text is None:
         return None
@@ -273,7 +273,8 @@ def _location_string(
 
 
 def _location_env_keys(side: str, key: str, *, shared: bool) -> tuple[str, ...]:
-    suffix = key.upper()
+    suffix = {"access_key_id": "ACCESS_KEY", "secret_access_key": "SECRET_KEY",
+              "endpoint_url": "ENDPOINT"}.get(key, key.upper())
     side_key = f"S3_{side}_{suffix}"
     if not shared:
         return (side_key,)

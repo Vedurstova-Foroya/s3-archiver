@@ -34,8 +34,8 @@ def test_transfer_capabilities_honor_provider_profile_registry(
     tmp_path: Path,
 ) -> None:
     env = _same_backend_env(tmp_path)
-    env["S3_DESTINATION_ACCESS_KEY_ID"] = env["S3_SOURCE_ACCESS_KEY_ID"]
-    env["S3_DESTINATION_SECRET_ACCESS_KEY"] = env["S3_SOURCE_SECRET_ACCESS_KEY"]
+    env["S3_DESTINATION_ACCESS_KEY"] = env["S3_SOURCE_ACCESS_KEY"]
+    env["S3_DESTINATION_SECRET_KEY"] = env["S3_SOURCE_SECRET_KEY"]
     settings = AppSettings.from_env(env)
     monkeypatch.setattr(
         s3_module,
@@ -78,8 +78,8 @@ def _same_backend_env(tmp_path: Path) -> dict[str, str]:
     env = dual_env(tmp_path)
     env["S3_SOURCE_PROVIDER"] = "localstack"
     env["S3_SOURCE_REGION"] = "us-east-1"
-    env["S3_SOURCE_ENDPOINT_URL"] = "http://127.0.0.1:4566"
+    env["S3_SOURCE_ENDPOINT"] = "http://127.0.0.1:4566"
     env["S3_DESTINATION_PROVIDER"] = "localstack"
     env["S3_DESTINATION_REGION"] = "us-east-1"
-    env["S3_DESTINATION_ENDPOINT_URL"] = "http://127.0.0.1:4566"
+    env["S3_DESTINATION_ENDPOINT"] = "http://127.0.0.1:4566"
     return env

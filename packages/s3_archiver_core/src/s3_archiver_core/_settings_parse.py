@@ -117,14 +117,14 @@ def parse_string_array_result(env: Mapping[str, str], key: str) -> ParseResult[t
     return ParseResult(tuple(items))
 
 
-def normalize_endpoint_url(raw: str, *, field: str = "S3_ENDPOINT_URL") -> str:
+def normalize_endpoint_url(raw: str, *, field: str = "S3_ENDPOINT") -> str:
     result = normalize_endpoint_url_result(raw, field=field)
     if result.issue is not None:
         raise ConfigError(result.issue.message)
     return cast(str, result.value)
 
 
-def normalize_endpoint_url_result(raw: str, *, field: str = "S3_ENDPOINT_URL") -> ParseResult[str]:
+def normalize_endpoint_url_result(raw: str, *, field: str = "S3_ENDPOINT") -> ParseResult[str]:
     parsed = urlsplit(raw)
     if parsed.scheme == "" or parsed.hostname is None:
         return ParseResult(

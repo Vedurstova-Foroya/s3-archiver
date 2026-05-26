@@ -31,8 +31,8 @@ def _route(
             "region": "us-east-1",
             "bucket": "source-bucket",
             "path": source_path,
-            "access_key_id": "${S3_SOURCE_ACCESS_KEY_ID}",
-            "secret_access_key": "${S3_SOURCE_SECRET_ACCESS_KEY}",
+            "access_key_id": "${S3_SOURCE_ACCESS_KEY}",
+            "secret_access_key": "${S3_SOURCE_SECRET_KEY}",
             "addressing_style": "path",
         },
         "destination": {
@@ -51,8 +51,8 @@ def _route(
 def _env(tmp_path: Path, routes: list[dict[str, object]]) -> dict[str, str]:
     return {
         "ARCHIVER_CONFIG_JSON": json.dumps(routes),
-        "S3_SOURCE_ACCESS_KEY_ID": "source-access",
-        "S3_SOURCE_SECRET_ACCESS_KEY": "source-secret",
+        "S3_SOURCE_ACCESS_KEY": "source-access",
+        "S3_SOURCE_SECRET_KEY": "source-secret",
         "LOG_DIR": str(tmp_path / "logs"),
     }
 
@@ -212,7 +212,7 @@ def test_from_env_uses_default_provider_when_route_source_omits_provider(tmp_pat
 
     settings = AppSettings.from_env(_env(tmp_path, [route]))
 
-    assert settings.routes[0].source.provider is S3Provider.LOCALSTACK
+    assert settings.routes[0].source.provider is S3Provider.CUSTOM
 
 
 @pytest.mark.unit()

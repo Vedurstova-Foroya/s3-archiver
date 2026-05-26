@@ -13,6 +13,7 @@ class S3Provider(StrEnum):
 
     OCI = "oci"
     LOCALSTACK = "localstack"
+    CUSTOM = "custom"
 
 
 class S3AddressingStyle(StrEnum):
@@ -63,6 +64,8 @@ class S3LocationSettings:
             return self.endpoint_url
         if self.provider is S3Provider.LOCALSTACK:
             return "http://localstack:4566"
+        if self.provider is S3Provider.CUSTOM:
+            raise ConfigError("S3_ENDPOINT is required when provider=custom")
         if self.namespace is None:
             raise ConfigError("S3_NAMESPACE is required for OCI endpoint resolution")
         return f"https://{self.namespace}.compat.objectstorage.{self.region}.oraclecloud.com"
@@ -73,7 +76,7 @@ class S3LocationSettings:
         return StorageLocationIdentity(
             provider=self.provider,
             endpoint_url=_normalize_endpoint_url(self.resolved_endpoint_url()),
-            region=self.region if self.provider is S3Provider.OCI else None,
+            region=self.region if self.provider in {S3Provider.OCI, S3Provider.CUSTOM} else None,
             namespace=self.namespace if self.provider is S3Provider.OCI else None,
             bucket=self.bucket,
         )

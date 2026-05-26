@@ -155,8 +155,8 @@ def test_localstack_guard_accepts_known_localstack_hosts(
     endpoint: str,
 ) -> None:
     safe_env = _integration_env(localstack_bucket_pair)
-    safe_env["S3_SOURCE_ENDPOINT_URL"] = endpoint
-    safe_env["S3_DESTINATION_ENDPOINT_URL"] = endpoint
+    safe_env["S3_SOURCE_ENDPOINT"] = endpoint
+    safe_env["S3_DESTINATION_ENDPOINT"] = endpoint
 
     assert_localstack_test_target(safe_env)
 
@@ -165,8 +165,8 @@ def test_localstack_guard_accepts_known_localstack_hosts(
 @pytest.mark.parametrize(
     ("field", "value", "match"),
     [
-        ("S3_DESTINATION_ENDPOINT_URL", "https://s3.amazonaws.com", "not allowed"),
-        ("S3_SOURCE_ENDPOINT_URL", None, "must be set"),
+        ("S3_DESTINATION_ENDPOINT", "https://s3.amazonaws.com", "not allowed"),
+        ("S3_SOURCE_ENDPOINT", None, "must be set"),
     ],
 )
 def test_localstack_guard_rejects_unsafe_endpoint_configuration(
@@ -191,7 +191,7 @@ def test_check_command_rejects_runtime_localstack_endpoint_outside_allowlist(
     localstack_bucket_pair: LocalstackBucketPair,
 ) -> None:
     env = _integration_env(localstack_bucket_pair)
-    env["S3_DESTINATION_ENDPOINT_URL"] = "https://s3.amazonaws.com"
+    env["S3_DESTINATION_ENDPOINT"] = "https://s3.amazonaws.com"
     monkeypatch.setattr(os, "environ", env)
 
     result = RUNNER.invoke(cli_module.app, ["check"])

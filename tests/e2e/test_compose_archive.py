@@ -110,7 +110,7 @@ def test_compose_archive_debug_logs_deterministic_tar_archive_metadata(
         bucket_pair,
         overrides={
             "LOG_LEVEL": "DEBUG",
-            "S3_DESTINATION_ENDPOINT_URL": destination_endpoint,
+            "S3_DESTINATION_ENDPOINT": destination_endpoint,
         },
     )
     run_env = dict(compose_env)
@@ -177,9 +177,9 @@ def test_compose_archive_runtime_probe_uses_streaming_for_cross_endpoint_setting
         "-e",
         "APP_ENV_FILE=/dev/null",
         "-e",
-        "S3_SOURCE_ENDPOINT_URL=http://localstack:4566",
+        "S3_SOURCE_ENDPOINT=http://localstack:4566",
         "-e",
-        "S3_DESTINATION_ENDPOINT_URL=http://localstack-alt:4566",
+        "S3_DESTINATION_ENDPOINT=http://localstack-alt:4566",
         "--entrypoint",
         "sh",
         "app",

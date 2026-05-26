@@ -159,6 +159,7 @@ S3ProviderTransferProfile = S3TransferCapabilities
 _TRANSFER_PROFILES: Mapping[str, S3ProviderTransferProfile] = {
     "localstack": S3ProviderTransferProfile(),
     "oci": S3ProviderTransferProfile(),
+    "custom": S3ProviderTransferProfile(),
 }
 
 

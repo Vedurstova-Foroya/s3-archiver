@@ -151,7 +151,7 @@ def test_build_s3_client_honors_endpoint_override_and_addressing_style(
     monkeypatch: pytest.MonkeyPatch,
     base_env: dict[str, str],
 ) -> None:
-    base_env["S3_SOURCE_ENDPOINT_URL"] = "https://override.example.invalid"
+    base_env["S3_SOURCE_ENDPOINT"] = "https://override.example.invalid"
     base_env["S3_SOURCE_ADDRESSING_STYLE"] = "virtual"
     settings = AppSettings.from_env(base_env)
     sessions: list[RecordingSession] = []
@@ -189,7 +189,7 @@ def test_build_s3_client_uses_short_localstack_timeouts(
     base_env["S3_SOURCE_PROVIDER"] = "localstack"
     base_env["S3_SOURCE_REGION"] = "us-east-1"
     base_env["S3_SOURCE_BUCKET"] = "source-bucket"
-    base_env["S3_SOURCE_ENDPOINT_URL"] = "http://127.0.0.1:4566"
+    base_env["S3_SOURCE_ENDPOINT"] = "http://127.0.0.1:4566"
     settings = AppSettings.from_env(base_env)
     sessions: list[RecordingSession] = []
 

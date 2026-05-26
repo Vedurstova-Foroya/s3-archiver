@@ -161,8 +161,8 @@ def test_checked_in_env_example_is_valid_route_config() -> None:
 
     settings = AppSettings.from_env(env)
 
-    assert settings.routes[0].source.iam_user_ocid == "ocid1.user.oc1..replace-me"
-    assert settings.routes[0].destination.iam_user_ocid == "ocid1.user.oc1..replace-me"
+    assert settings.routes[0].source.provider.value == "custom"
+    assert settings.routes[0].source.endpoint_url == "https://s3.example.com"
 
 
 @pytest.mark.unit()
@@ -196,38 +196,38 @@ def _env_file_contents(tmp_path: Path) -> str:
     return "\n".join(
         (
             "S3_SOURCE_PROVIDER=oci",
-            "S3_SOURCE_ACCESS_KEY_ID=access-key",
-            "S3_SOURCE_SECRET_ACCESS_KEY=secret-key",
+            "S3_SOURCE_ACCESS_KEY=access-key",
+            "S3_SOURCE_SECRET_KEY=secret-key",
             "S3_SOURCE_REGION=eu-frankfurt-1",
             "S3_SOURCE_NAMESPACE=tenant",
             "S3_SOURCE_BUCKET=archive-bucket",
             "S3_SOURCE_IAM_USER_OCID=ocid1.user.oc1..example",
-            "S3_SOURCE_ENDPOINT_URL=https://tenant.compat.objectstorage.eu-frankfurt-1.oraclecloud.com",
+            "S3_SOURCE_ENDPOINT=https://tenant.compat.objectstorage.eu-frankfurt-1.oraclecloud.com",
             "S3_SOURCE_ADDRESSING_STYLE=path",
             "S3_DESTINATION_PROVIDER=localstack",
-            "S3_DESTINATION_ACCESS_KEY_ID=destination-access",
-            "S3_DESTINATION_SECRET_ACCESS_KEY=destination-secret",
+            "S3_DESTINATION_ACCESS_KEY=destination-access",
+            "S3_DESTINATION_SECRET_KEY=destination-secret",
             "S3_DESTINATION_REGION=us-east-1",
             "S3_DESTINATION_BUCKET=destination-bucket",
-            "S3_DESTINATION_ENDPOINT_URL=http://localstack:4566",
+            "S3_DESTINATION_ENDPOINT=http://localstack:4566",
             "S3_DESTINATION_ADDRESSING_STYLE=path",
             (
                 'ARCHIVER_CONFIG_JSON=[{"name":"default","parser":"filename_timestamp",'
                 '"copy_mode":"daily_tar_gz",'
                 '"source":{"provider":"${S3_SOURCE_PROVIDER}",'
-                '"endpoint_url":"${S3_SOURCE_ENDPOINT_URL}",'
+                '"endpoint_url":"${S3_SOURCE_ENDPOINT}",'
                 '"region":"${S3_SOURCE_REGION}","namespace":"${S3_SOURCE_NAMESPACE}",'
                 '"bucket":"${S3_SOURCE_BUCKET}",'
                 '"iam_user_ocid":"${S3_SOURCE_IAM_USER_OCID}",'
-                '"path":"","access_key_id":"${S3_SOURCE_ACCESS_KEY_ID}",'
-                '"secret_access_key":"${S3_SOURCE_SECRET_ACCESS_KEY}",'
+                '"path":"","access_key_id":"${S3_SOURCE_ACCESS_KEY}",'
+                '"secret_access_key":"${S3_SOURCE_SECRET_KEY}",'
                 '"addressing_style":"${S3_SOURCE_ADDRESSING_STYLE}"},'
                 '"destination":{"provider":"${S3_DESTINATION_PROVIDER}",'
-                '"endpoint_url":"${S3_DESTINATION_ENDPOINT_URL}",'
+                '"endpoint_url":"${S3_DESTINATION_ENDPOINT}",'
                 '"region":"${S3_DESTINATION_REGION}",'
                 '"bucket":"${S3_DESTINATION_BUCKET}","path":"",'
-                '"access_key_id":"${S3_DESTINATION_ACCESS_KEY_ID}",'
-                '"secret_access_key":"${S3_DESTINATION_SECRET_ACCESS_KEY}",'
+                '"access_key_id":"${S3_DESTINATION_ACCESS_KEY}",'
+                '"secret_access_key":"${S3_DESTINATION_SECRET_KEY}",'
                 '"addressing_style":"${S3_DESTINATION_ADDRESSING_STYLE}"}}]'
             ),
             "LOG_LEVEL=INFO",

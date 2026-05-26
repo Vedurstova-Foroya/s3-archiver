@@ -22,8 +22,8 @@ def _route() -> dict[str, object]:
             "region": "us-east-1",
             "bucket": "source-bucket",
             "path": "data/fae/",
-            "access_key_id": "${S3_SOURCE_ACCESS_KEY_ID}",
-            "secret_access_key": "${S3_SOURCE_SECRET_ACCESS_KEY}",
+            "access_key_id": "${S3_SOURCE_ACCESS_KEY}",
+            "secret_access_key": "${S3_SOURCE_SECRET_KEY}",
             "addressing_style": "path",
         },
         "destination": {
@@ -42,8 +42,8 @@ def _route() -> dict[str, object]:
 def _env(tmp_path: Path, route: dict[str, object]) -> dict[str, str]:
     return {
         "ARCHIVER_CONFIG_JSON": json.dumps([route]),
-        "S3_SOURCE_ACCESS_KEY_ID": "source-access",
-        "S3_SOURCE_SECRET_ACCESS_KEY": "source-secret",
+        "S3_SOURCE_ACCESS_KEY": "source-access",
+        "S3_SOURCE_SECRET_KEY": "source-secret",
         "LOG_DIR": str(tmp_path / "logs"),
     }
 

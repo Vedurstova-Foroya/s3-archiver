@@ -94,12 +94,12 @@ def test_harness_env_and_bucket_cleanup_branches(
     with pytest.raises(RuntimeError, match="S3_SOURCE_PROVIDER"):
         harness_module.assert_localstack_test_target({**env, "S3_SOURCE_PROVIDER": "aws"})
     missing_endpoint_env = {**env}
-    del missing_endpoint_env["S3_SOURCE_ENDPOINT_URL"]
+    del missing_endpoint_env["S3_SOURCE_ENDPOINT"]
     with pytest.raises(RuntimeError, match="must be set"):
         harness_module.assert_localstack_test_target(missing_endpoint_env)
     with pytest.raises(RuntimeError, match="not allowed"):
         harness_module.assert_localstack_test_target(
-            {**env, "S3_SOURCE_ENDPOINT_URL": "https://example.com"}
+            {**env, "S3_SOURCE_ENDPOINT": "https://example.com"}
         )
 
     client = FakeAdminClient()
