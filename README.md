@@ -17,8 +17,8 @@ default it reads `.env` from the repo root — start from `.env.example`
 keep it elsewhere.
 
 ```bash
-docker compose run --rm app s3-archiver check     # validate config + S3
-docker compose run --rm app s3-archiver archive   # one archive pass
+docker compose run --rm app check     # validate config + S3
+docker compose run --rm app archive   # one archive pass
 docker compose logs -f scheduler                  # tail the loop
 ```
 

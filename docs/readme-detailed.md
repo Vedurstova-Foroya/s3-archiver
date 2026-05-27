@@ -30,7 +30,7 @@ docker compose --profile test exec -T localstack \
   awslocal s3api create-bucket --bucket "${source_bucket}"
 docker compose --profile test exec -T localstack \
   awslocal s3api create-bucket --bucket "${destination_bucket}"
-APP_ENV_FILE=".local/e2e-${suffix}.env" docker compose --profile test run --rm app s3-archiver check
+APP_ENV_FILE=".local/e2e-${suffix}.env" docker compose --profile test run --rm app check
 docker compose --profile test down -v
 ```
 
