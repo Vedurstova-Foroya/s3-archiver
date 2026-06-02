@@ -228,3 +228,4 @@ def test_key_only_archive_succeeds_when_current_source_still_matches() -> None:
     )
 
     assert result.ok is True
+

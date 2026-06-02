@@ -56,3 +56,14 @@ def test_from_env_rejects_invalid_route_destination_fields(tmp_path: Path) -> No
 
     with pytest.raises(ConfigError, match="endpoint_url"):
         _ = AppSettings.from_env(_env(tmp_path, route))
+
+
+@pytest.mark.unit()
+def test_from_env_rejects_custom_source_without_endpoint(tmp_path: Path) -> None:
+    route = _route()
+    source = cast(dict[str, object], route["source"])
+    source["provider"] = "custom"
+    source["endpoint_url"] = None
+
+    with pytest.raises(ConfigError, match="endpoint_url"):
+        _ = AppSettings.from_env(_env(tmp_path, route))

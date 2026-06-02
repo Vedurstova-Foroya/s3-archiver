@@ -10,7 +10,11 @@ from typing import cast, final, override
 import pytest
 from botocore.exceptions import ClientError
 from s3_archiver_core import s3_transfer as transfer_module
-from s3_archiver_core._archive_s3_helpers import is_not_implemented_error, put_object_tags
+from s3_archiver_core._archive_s3_helpers import (
+    ReadableBody,
+    is_not_implemented_error,
+    put_object_tags,
+)
 from s3_archiver_core.archive_s3 import S3ArchiveBucket
 from s3_archiver_core.s3 import S3_CHUNK_BYTES, S3Client, S3ObjectProperties
 
@@ -18,8 +22,6 @@ from tests.unit.archive_s3_fakes import (
     FakeArchiveClient,
     FakeClientError,
     client_error,
-    copy_object,
-    properties,
 )
 
 
@@ -57,6 +59,20 @@ def _minimal_properties(size: int = 1) -> S3ObjectProperties:
         {},
         None,
     )
+
+
+class FailingReadableBody:
+    calls: int
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def read(self, amount: int | None = None) -> bytes:
+        _ = amount
+        self.calls += 1
+        if self.calls == 1:
+            return b"partial"
+        raise RuntimeError("read failed")
 
 
 @pytest.mark.unit()
@@ -110,14 +126,21 @@ def test_s3_transfer_stage_failure_before_file_creation(tmp_path: Path) -> None:
     _ = blocked_temp_dir.write_text("file", encoding="utf-8")
 
     with pytest.raises(FileExistsError):
-        copy_object(
-            S3ArchiveBucket(FakeArchiveClient(), "destination", blocked_temp_dir),
-            properties(1),
-            "temp_file_backed",
-            S3ArchiveBucket(FakeArchiveClient(), "source"),
+        _ = transfer_module._stage(  # pyright: ignore[reportPrivateUsage]
+            cast(ReadableBody, cast(object, FailingReadableBody())), blocked_temp_dir
         )
 
     assert blocked_temp_dir.read_text(encoding="utf-8") == "file"
+
+
+@pytest.mark.unit()
+def test_s3_transfer_stage_removes_temp_file_when_body_read_fails(tmp_path: Path) -> None:
+    with pytest.raises(RuntimeError, match="read failed"):
+        _ = transfer_module._stage(  # pyright: ignore[reportPrivateUsage]
+            cast(ReadableBody, cast(object, FailingReadableBody())), tmp_path
+        )
+
+    assert list(tmp_path.iterdir()) == []
 
 
 @pytest.mark.unit()

@@ -13,6 +13,8 @@ services:
     environment:
       APP_ENV_FILE: ${APP_ENV_FILE:-.env}
       LOG_DIR: /var/log/s3-archiver
+    labels:
+      s3-archiver.env.ARCHIVER_CONFIG_JSON: env_file
     volumes:
       - app_logs:/var/log/s3-archiver
 
@@ -31,6 +33,8 @@ services:
     environment:
       APP_ENV_FILE: ${APP_ENV_FILE:-.env}
       LOG_DIR: /var/log/s3-archiver
+    labels:
+      s3-archiver.env.ARCHIVER_CONFIG_JSON: env_file
     restart: unless-stopped
     volumes:
       - app_logs:/var/log/s3-archiver

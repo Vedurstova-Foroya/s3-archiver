@@ -21,6 +21,11 @@ from s3_archiver_core._archive_manifest_paths import (
     storage_identity,
 )
 from s3_archiver_core._archive_manifest_store import SQLiteManifestStore
+from s3_archiver_core._archive_size_limits import (
+    estimated_archive_size_bytes,
+    filter_archive_groups_by_size,
+    max_destination_archive_size_bytes,
+)
 from s3_archiver_core.archive_progress import ArchiveProgress, ProgressLogger
 from s3_archiver_core.s3 import VersioningState
 
@@ -83,26 +88,43 @@ def build_route_archive_manifest(
     if store is not None:
         store.commit()
         store.assert_no_duplicate_sources()
-        store.assert_no_duplicate_destinations()
+        if not _archive_size_filter_needed(store.archive_groups):
+            store.assert_no_duplicate_destinations()
+            return ArchiveManifest(
+                run_started,
+                store.entries,
+                None,
+                store.archive_groups,
+                store.skipped_objects,
+                "sqlite",
+                store.entry_size_sum(),
+            )
+        entries_tuple, groups_tuple, skipped_tuple = filter_archive_groups_by_size(
+            tuple(store.entries), tuple(store.archive_groups), tuple(store.skipped_objects)
+        )
+        _reject_duplicate_destinations(entries_tuple, groups_tuple)
         return ArchiveManifest(
             run_started,
-            store.entries,
+            entries_tuple,
             None,
-            store.archive_groups,
-            store.skipped_objects,
+            groups_tuple,
+            skipped_tuple,
             "sqlite",
-            store.entry_size_sum(),
+            sum(entry.size for entry in entries_tuple),
         )
     entry_tuple = tuple(entries)
     _reject_duplicate_sources(entry_tuple)
     grouped = archive_groups(entry_tuple)
+    entry_tuple, grouped, skipped_tuple = filter_archive_groups_by_size(
+        entry_tuple, grouped, tuple(skipped)
+    )
     _reject_duplicate_destinations(entry_tuple, grouped)
     return ArchiveManifest(
         run_started,
         entry_tuple,
         None,
         grouped,
-        tuple(skipped),
+        skipped_tuple,
         source_byte_count=sum(entry.size for entry in entry_tuple),
     )
 
@@ -126,6 +148,11 @@ def _reject_overlapping_source_paths(routes: tuple[ArchiveManifestRouteSpec, ...
 
 def _route_versioning_state(route: ArchiveManifestRouteSpec) -> VersioningState:
     return route.versioning_state or route.source.versioning_state()
+
+
+def _archive_size_filter_needed(groups: Iterable[ArchiveGroup]) -> bool:
+    limit = max_destination_archive_size_bytes()
+    return any(estimated_archive_size_bytes(group.entries) > limit for group in groups)
 
 
 def _list_progress_total() -> int:

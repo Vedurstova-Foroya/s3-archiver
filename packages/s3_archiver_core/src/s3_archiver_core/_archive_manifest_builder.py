@@ -23,6 +23,12 @@ from s3_archiver_core._archive_manifest_paths import (
     storage_identity,
 )
 from s3_archiver_core._archive_manifest_selection import select_object
+from s3_archiver_core._archive_size_limits import (
+    filter_archive_groups_by_size,
+    log_source_object_skip,
+    max_source_object_size_bytes,
+    source_object_skip_reason,
+)
 from s3_archiver_core.parsers.filename_timestamp import (
     archive_root_for_key,
     destination_archive_key,
@@ -68,12 +74,16 @@ def build_archive_manifest(
         else:
             skipped.append(item)
     entry_tuple = tuple(entries)
+    grouped = archive_groups(entry_tuple)
+    entry_tuple, grouped, skipped_tuple = filter_archive_groups_by_size(
+        entry_tuple, grouped, tuple(skipped)
+    )
     return ArchiveManifest(
         as_utc(run_started_at_utc),
         entry_tuple,
         None,
-        archive_groups(entry_tuple),
-        tuple(skipped),
+        grouped,
+        skipped_tuple,
         source_byte_count=sum(entry.size for entry in entry_tuple),
     )
 
@@ -106,8 +116,14 @@ def iter_archive_manifest_items(
         destination_identity=destination_identity or storage_identity(destination),
     )
     run_started = as_utc(run_started_at_utc)
+    max_source_size = max_source_object_size_bytes()
     for listed in _list_source_objects(source, versioning_state, context.source_path):
         if context.source_path and not listed.key.startswith(context.source_path):
+            continue
+        if reason := source_object_skip_reason(listed.size):
+            skipped = context.skipped_object(listed, reason)
+            log_source_object_skip(skipped, max_size_bytes=max_source_size)
+            yield skipped
             continue
         selected = select_object(parser_kind, listed, context.source_path)
         if isinstance(selected, SkippedObject | ParserSkippedObject):

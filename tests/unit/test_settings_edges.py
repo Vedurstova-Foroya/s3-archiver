@@ -46,6 +46,24 @@ def test_oci_endpoint_resolution_requires_namespace() -> None:
 
 
 @pytest.mark.unit()
+def test_custom_endpoint_resolution_requires_explicit_endpoint() -> None:
+    location = S3LocationSettings(
+        provider=S3Provider.CUSTOM,
+        access_key_id="access",
+        secret_access_key="secret",
+        region="us-east-1",
+        bucket="bucket",
+        namespace=None,
+        iam_user_ocid=None,
+        endpoint_url=None,
+        addressing_style=S3AddressingStyle.PATH,
+    )
+
+    with pytest.raises(ConfigError, match="S3_ENDPOINT"):
+        _ = location.resolved_endpoint_url()
+
+
+@pytest.mark.unit()
 def test_default_endpoint_resolution_covers_supported_providers() -> None:
     localstack = S3LocationSettings(
         provider=S3Provider.LOCALSTACK,

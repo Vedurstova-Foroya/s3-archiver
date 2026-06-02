@@ -215,7 +215,6 @@ def test_from_env_uses_default_provider_when_route_source_omits_provider(tmp_pat
     assert settings.routes[0].source.provider is S3Provider.CUSTOM
 
 
-@pytest.mark.unit()
 def test_from_env_rejects_localstack_endpoint_outside_allowlist(tmp_path: Path) -> None:
     route = _route()
     source = cast(dict[str, object], route["source"])

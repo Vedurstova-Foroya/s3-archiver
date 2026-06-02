@@ -14,6 +14,10 @@ The CLI loads `.env` by default. `APP_ENV_FILE` or `ENV_FILE` can point at anoth
 
 Archive routes come from `ARCHIVER_CONFIG_JSON`. Each route chooses a registered parser, a copy mode (`daily_tar_gz` or `direct`), and source and destination S3 locations. Built-in parser names are `filename_timestamp`, `folder_timestamp`, and `direct`; custom parser modules that expose a `Parser` class are registered by filename. `daily_tar_gz` writes deterministic grouped archives by data day. `direct` copy mode writes one destination object per selected source key under the route destination path.
 
+Object size guardrails default to 100 GiB, expressed as `102400` MiB. Set `ARCHIVER_MAX_SOURCE_OBJECT_SIZE_MIB` to skip listed source objects above that size, and `ARCHIVER_MAX_DESTINATION_ARCHIVE_SIZE_MIB` to skip archive groups whose estimated staged tar size is above that size. Skips are logged as warnings and summarized again when the run completes.
+
+Runtime visibility logs include `archive.object.large` before source objects at or above `ARCHIVER_LARGE_OBJECT_LOG_BYTES` (`1073741824` by default), and `archive.object.long_running` when one direct copy or archive-member write exceeds `ARCHIVER_LONG_OBJECT_LOG_SECONDS` (`300` by default).
+
 Use shared S3 environment variables for provider, auth, endpoint, region, addressing style, and OCI fields, then set only the buckets per side:
 
 ```shell

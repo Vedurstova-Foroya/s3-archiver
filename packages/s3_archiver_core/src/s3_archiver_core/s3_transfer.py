@@ -16,7 +16,7 @@ from s3_archiver_core._archive_s3_helpers import (
     versioned_kwargs,
 )
 from s3_archiver_core.s3 import S3_CHUNK_BYTES, S3Client, S3ObjectProperties, TransferStrategy
-from s3_archiver_core.temp_files import TRANSFER_TEMP_PREFIX
+from s3_archiver_core.temp_files import TRANSFER_TEMP_PREFIX, ensure_temp_storage_available
 
 S3_MAX_MULTIPART_PARTS = 10_000
 
@@ -54,6 +54,14 @@ def copy_s3_object(
             metadata,
         )
         return
+    if strategy == "temp_file_backed":
+        _ = ensure_temp_storage_available(
+            temp_dir,
+            required_bytes=properties.size,
+            source_key=source_key,
+            destination_key=destination_key,
+            operation="temp_file_backed_transfer",
+        )
     body: ReadableBody | None = None
     try:
         body = _source_body(source_client, source_bucket, source_key, source_version_id)

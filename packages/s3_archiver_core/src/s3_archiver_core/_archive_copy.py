@@ -11,11 +11,16 @@ from s3_archiver_core._archive_copy_routes import (
     direct_entries_for_route,
     direct_entry_count,
 )
-from s3_archiver_core._archive_env import bool_env
 from s3_archiver_core._archive_manifest_models import ArchiveGroup, ArchiveManifest, ManifestEntry
+from s3_archiver_core._archive_object_activity import (
+    entry_activity_watchdog,
+    log_large_entry,
+)
 from s3_archiver_core._archive_parallel import run_parallel_items
 from s3_archiver_core._archive_phase_progress import PhaseProgress
 from s3_archiver_core._archive_protocols import ArchiveBucket
+from s3_archiver_core._archive_size_limits import estimated_archive_size_bytes
+from s3_archiver_core._archive_verify_direct import verify_direct_entry
 from s3_archiver_core.archive_group_metadata import (
     ARCHIVE_SHA256_METADATA_KEY,
     existing_archive_verified,
@@ -27,20 +32,14 @@ from s3_archiver_core.archive_result import ArchivePhaseResult
 from s3_archiver_core.archive_routes import ArchiveRoute, DebugLogger
 from s3_archiver_core.archive_tar import sha256_file, write_tar_gz_archive
 from s3_archiver_core.archive_transfer import (
-    VerificationResult,
     archive_metadata,
     select_transfer_strategy,
-    verify_destination,
-    verify_destination_checksum,
-    verify_destination_content,
 )
-from s3_archiver_core.s3 import S3ObjectProperties
-from s3_archiver_core.temp_files import TRANSFER_TEMP_PREFIX
+from s3_archiver_core.temp_files import TRANSFER_TEMP_PREFIX, ensure_temp_storage_available
 
 type GroupIdentity = tuple[object | None, str, str]
 type EntryIdentity = tuple[object | None, str, str, str | None]
 type ProgressAdvance = Callable[[int], None]
-_DIRECT_CONTENT_VERIFY_ENV = "ARCHIVER_DIRECT_CONTENT_VERIFY"
 
 
 def copy_phase(
@@ -123,43 +122,34 @@ def copy_direct_entry(
         strategy = select_transfer_strategy(entry.size, route.transfer_capabilities)
         if debug_logger is not None:
             debug_logger(hydrated, strategy)
-        route.destination.copy_from(
-            route.source,
-            hydrated.source_bucket,
-            hydrated.key,
-            hydrated.version_id,
-            hydrated.object.properties,
-            destination_key,
-            metadata,
-            strategy,
+        log_large_entry(
+            operation="direct_copy",
+            entry=hydrated,
+            destination_bucket=route.destination.bucket,
+            destination_key=destination_key,
         )
+        with entry_activity_watchdog(
+            operation="direct_copy",
+            entry=hydrated,
+            destination_bucket=route.destination.bucket,
+            destination_key=destination_key,
+        ):
+            route.destination.copy_from(
+                route.source,
+                hydrated.source_bucket,
+                hydrated.key,
+                hydrated.version_id,
+                hydrated.object.properties,
+                destination_key,
+                metadata,
+                strategy,
+            )
     except Exception as exc:
         return f"{destination_key}: {exc}", False
     verified = verify_direct_entry(route, hydrated, route.destination.head_object(destination_key))
     if verified.ok:
         return None, True
     return f"{destination_key}: {verified.detail}", False
-
-
-def verify_direct_entry(
-    route: ArchiveRoute,
-    entry: ManifestEntry,
-    destination: S3ObjectProperties | None,
-) -> VerificationResult:
-    _ = route
-    verified = verify_destination(entry, destination)
-    if not verified.ok:
-        return verified
-    assert destination is not None
-    checksum_verified = verify_destination_checksum(entry.object.properties, destination)
-    if checksum_verified is not None:
-        return checksum_verified
-    if not bool_env(_DIRECT_CONTENT_VERIFY_ENV):
-        return VerificationResult(True, "ok")
-    return verify_destination_content(
-        route.source.content_sha256(entry.key, entry.version_id),
-        route.destination.content_sha256(entry.destination_key),
-    )
 
 
 def copy_group(
@@ -183,6 +173,13 @@ def copy_group(
         if debug_logger is not None:
             for entry in group.entries:
                 debug_logger(entry, "deterministic_tar_gzip")
+        _ = ensure_temp_storage_available(
+            destination.temp_dir,
+            required_bytes=estimated_archive_size_bytes(group.entries),
+            source_key=_group_source_key(group),
+            destination_key=destination_key,
+            operation="archive_group_staging",
+        )
         destination.temp_dir.mkdir(parents=True, exist_ok=True)
         with tempfile.NamedTemporaryFile(
             "wb", delete=False, dir=destination.temp_dir, prefix=TRANSFER_TEMP_PREFIX
@@ -263,6 +260,12 @@ def _advance_group_progress(group: ArchiveGroup, progress_logger: ProgressAdvanc
     if progress_logger is None:
         return
     progress_logger(group.source_count or len(group.entries))
+
+
+def _group_source_key(group: ArchiveGroup) -> str:
+    if group.entries:
+        return group.entries[0].key
+    return "<empty archive group>"
 
 
 def _group_identity(group: ArchiveGroup) -> GroupIdentity:

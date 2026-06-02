@@ -74,6 +74,11 @@ Copy modes:
 - `timestamp_child_tar_gz`: for `folder_timestamp_child` routes, writes one deterministic `.tar.gz` archive per route, archive root, and selected timestamp hour plus child folder, such as `2026-05-16-00-d01.tar.gz`.
 - `direct`: copies each selected source object directly to the destination path.
 
+Size guardrails:
+
+- `ARCHIVER_MAX_SOURCE_OBJECT_SIZE_MIB` defaults to `102400` MiB. Listed source objects larger than this are skipped before copy.
+- `ARCHIVER_MAX_DESTINATION_ARCHIVE_SIZE_MIB` defaults to `102400` MiB. Archive groups whose estimated staged tar size is larger than this are skipped before local archive creation.
+
 Parser and copy mode are independent: `parser: direct` means select by S3 `LastModified`, while `copy_mode: direct` means write one destination object per selected source key.
 See `docs/parsers.md` for detailed parser and copy-mode behavior, and
 `docs/parser-copy-mode-matrix.md` for every supported parser × copy_mode
@@ -243,6 +248,9 @@ Run all suites with the canonical coverage-gated command:
 - Console logs are JSON lines filtered by `LOG_LEVEL`.
 - The same records are written to a timed rotating file handler.
 - The file logger keeps 30 daily files.
+- Large source objects emit an `archive.object.large` log before transfer; `ARCHIVER_LARGE_OBJECT_LOG_BYTES` defaults to `1073741824`.
+- Single-object copy/archive-member writes emit `archive.object.long_running` after `ARCHIVER_LONG_OBJECT_LOG_SECONDS`, which defaults to `300`.
+- Oversized object/archive skips are logged as warnings, and completion logs repeat skipped-object counts by reason.
 - Inspect the file logs with Docker:
 
 ```bash

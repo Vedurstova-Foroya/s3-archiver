@@ -17,7 +17,11 @@ from typing import cast, final, override
 import pytest
 from mypy_boto3_s3.client import S3Client
 from s3_archiver_core.errors import HealthCheckError
-from s3_archiver_core.health import PARSER_SAMPLE_LIMIT, run_health_check
+from s3_archiver_core.health import (
+    PARSER_SAMPLE_LIMIT,
+    PARSER_SKIP_EXAMPLE_LIMIT,
+    run_health_check,
+)
 from s3_archiver_core.parsers.kinds import ParserKind
 from s3_archiver_core.parsers.protocol import ParserContext, ParserListedObject
 from s3_archiver_core.parsers.results import SelectedObject, SkippedObject
@@ -238,3 +242,39 @@ def test_parser_check_records_value_error_as_skip_example(
     assert len(route.parser_skip_examples) == 1
     assert "synthetic parser failure" in route.parser_skip_examples[0]
     assert "first.bin" in route.parser_skip_examples[0]
+
+
+@final
+class _AlwaysRaisingParser:
+    def parse(
+        self, listed: ParserListedObject, context: ParserContext
+    ) -> SelectedObject | SkippedObject:
+        _ = listed
+        _ = context
+        raise ValueError("synthetic parser failure")
+
+
+def _build_always_raising_parser(_kind: ParserKind) -> _AlwaysRaisingParser:
+    return _AlwaysRaisingParser()
+
+
+@pytest.mark.unit()
+def test_parser_check_caps_value_error_skip_examples(
+    monkeypatch: pytest.MonkeyPatch, base_env: dict[str, str]
+) -> None:
+    settings = AppSettings.from_env(base_env)
+    clients = [
+        SuccessfulClient(sample_keys=tuple(f"bad-{index}.bin" for index in range(5))),
+        SuccessfulClient(),
+    ]
+
+    def build_client(_: S3LocationSettings) -> S3Client:
+        return cast(S3Client, cast(object, clients.pop(0)))
+
+    monkeypatch.setattr("s3_archiver_core.health.build_s3_client", build_client)
+    monkeypatch.setattr("s3_archiver_core.health.parser_for_kind", _build_always_raising_parser)
+
+    with pytest.raises(HealthCheckError, match="matched 0 of 5 sampled object"):
+        _ = run_health_check(settings, Path(base_env["LOG_DIR"]) / "s3-archiver.log")
+
+    assert PARSER_SKIP_EXAMPLE_LIMIT == 3

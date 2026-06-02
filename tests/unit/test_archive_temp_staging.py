@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import override
+from typing import NamedTuple, override
 
 import pytest
 from s3_archiver_core._archive_copy import copy_group
@@ -34,6 +34,49 @@ def test_copy_group_stages_archive_in_destination_temp_dir(tmp_path: Path) -> No
     assert list(temp_dir.iterdir()) == []
 
 
+@pytest.mark.unit()
+def test_copy_group_rejects_archive_that_cannot_fit_in_temp_dir(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source, group = _source_and_group()
+    temp_dir = tmp_path / "runtime-temp"
+    destination = RecordingUploadBucket("destination", temp_dir=temp_dir)
+    monkeypatch.setattr(
+        "s3_archiver_core.temp_files.shutil.disk_usage",
+        _disk_usage(total=100, used=90, free=10),
+    )
+
+    failure, verified = copy_group(source, destination, group, None)
+
+    assert failure is not None
+    assert "archive_group_staging requires" in failure
+    assert "source_key=data/fae/2026-04-13T00-00-00Z.txt" in failure
+    assert verified is False
+    assert destination.upload_parent is None
+    assert not temp_dir.exists() or list(temp_dir.iterdir()) == []
+
+
+@pytest.mark.unit()
+def test_copy_group_reports_empty_source_key_for_empty_group(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    temp_dir = tmp_path / "runtime-temp"
+    destination = RecordingUploadBucket("destination", temp_dir=temp_dir)
+    group = ArchiveGroup(STARTED.date(), "", "empty.tar.gz", ())
+    monkeypatch.setattr(
+        "s3_archiver_core.temp_files.shutil.disk_usage",
+        _disk_usage(total=100, used=90, free=10),
+    )
+
+    failure, verified = copy_group(FakeBucket("source"), destination, group, None)
+
+    assert failure is not None
+    assert "source_key=<empty archive group>" in failure
+    assert verified is False
+
+
 class RecordingUploadBucket(FakeBucket):
     upload_parent: Path | None
 
@@ -60,3 +103,16 @@ def _source_and_group() -> tuple[FakeBucket, ArchiveGroup]:
         copy_mode="daily_tar_gz",
     )
     return source, manifest.archive_groups[0]
+
+
+class _DiskUsage(NamedTuple):
+    total: int
+    used: int
+    free: int
+
+
+def _disk_usage(*, total: int, used: int, free: int) -> object:
+    def disk_usage(_path: object) -> _DiskUsage:
+        return _DiskUsage(total=total, used=used, free=free)
+
+    return disk_usage

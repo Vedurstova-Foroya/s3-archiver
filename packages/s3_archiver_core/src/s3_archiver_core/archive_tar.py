@@ -8,6 +8,10 @@ import tarfile
 from collections.abc import Callable
 from pathlib import Path
 
+from s3_archiver_core._archive_object_activity import (
+    entry_activity_watchdog,
+    log_large_entry,
+)
 from s3_archiver_core._archive_protocols import ArchiveBucket
 from s3_archiver_core.archive_manifest import ArchiveGroup
 from s3_archiver_core.s3 import S3_CHUNK_BYTES
@@ -31,23 +35,35 @@ def write_tar_gz_archive(
         tarfile.open(fileobj=gzip_file, mode="w") as tar,
     ):
         for entry in group.entries:
-            body = source.read_source_stream(entry.key, entry.version_id)
-            try:
-                member_name, pax_headers = _member_name(entry.key)
-                info = tarfile.TarInfo(member_name)
-                info.size = entry.size
-                info.mtime = 0
-                info.mode = 0o644
-                info.uid = 0
-                info.gid = 0
-                info.uname = ""
-                info.gname = ""
-                info.pax_headers = dict(pax_headers)
-                tar.addfile(info, body)
-                if progress_logger is not None:
-                    progress_logger()
-            finally:
-                body.close()
+            log_large_entry(
+                operation="archive_member_write",
+                entry=entry,
+                destination_bucket=group.destination_bucket,
+                destination_key=group.destination_archive_key,
+            )
+            with entry_activity_watchdog(
+                operation="archive_member_write",
+                entry=entry,
+                destination_bucket=group.destination_bucket,
+                destination_key=group.destination_archive_key,
+            ):
+                body = source.read_source_stream(entry.key, entry.version_id)
+                try:
+                    member_name, pax_headers = _member_name(entry.key)
+                    info = tarfile.TarInfo(member_name)
+                    info.size = entry.size
+                    info.mtime = 0
+                    info.mode = 0o644
+                    info.uid = 0
+                    info.gid = 0
+                    info.uname = ""
+                    info.gname = ""
+                    info.pax_headers = dict(pax_headers)
+                    tar.addfile(info, body)
+                    if progress_logger is not None:
+                        progress_logger()
+                finally:
+                    body.close()
 
 
 def sha256_file(path: Path) -> str:
