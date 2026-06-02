@@ -10,10 +10,17 @@ from typing import cast, final, override
 import pytest
 from botocore.exceptions import ClientError
 from s3_archiver_core import s3_transfer as transfer_module
+from s3_archiver_core._archive_s3_helpers import is_not_implemented_error, put_object_tags
 from s3_archiver_core.archive_s3 import S3ArchiveBucket
 from s3_archiver_core.s3 import S3_CHUNK_BYTES, S3Client, S3ObjectProperties
 
-from tests.unit.archive_s3_fakes import FakeArchiveClient, copy_object, properties
+from tests.unit.archive_s3_fakes import (
+    FakeArchiveClient,
+    FakeClientError,
+    client_error,
+    copy_object,
+    properties,
+)
 
 
 class HeadErrorClient(FakeArchiveClient):
@@ -163,6 +170,72 @@ def test_safe_abort_multipart_returns_quietly_when_abort_succeeds() -> None:
         cast(S3Client, cast(object, client)), "bucket", "key", "upload-id"
     )
     assert client.abort_calls == [{"Bucket": "bucket", "Key": "key", "UploadId": "upload-id"}]
+
+
+@pytest.mark.unit()
+def test_put_tags_skips_when_tag_map_is_empty() -> None:
+    client = FakeArchiveClient()
+    put_object_tags(cast(S3Client, cast(object, client)), "bucket", "key", {})
+    assert client.tagging_calls == []
+
+
+class TaggingErrorClient(FakeArchiveClient):
+    def __init__(self, error: ClientError) -> None:
+        super().__init__()
+        self.error: ClientError = error
+
+    @override
+    def put_object_tagging(self, **kwargs: object) -> Mapping[str, object]:
+        _ = kwargs
+        raise self.error
+
+
+@pytest.mark.unit()
+def test_put_tags_swallows_not_implemented_and_logs_warning() -> None:
+    records: list[logging.LogRecord] = []
+    logger = logging.getLogger("s3_archiver.archive")
+    handler = _RecordHandler(records)
+    handler.setLevel(logging.WARNING)
+    logger.addHandler(handler)
+    try:
+        client = TaggingErrorClient(client_error("NotImplemented", status=501))
+        put_object_tags(cast(S3Client, cast(object, client)), "bucket", "key", {"kind": "source"})
+    finally:
+        logger.removeHandler(handler)
+    events = [
+        record
+        for record in records
+        if record.message == "destination does not support object tagging; tags dropped"
+    ]
+    assert len(events) == 1
+    extras = events[0].__dict__
+    assert extras["event"] == "archive.tagging.unsupported"
+    assert extras["bucket"] == "bucket"
+    assert extras["key"] == "key"
+
+
+@pytest.mark.unit()
+def test_put_tags_reraises_other_client_errors() -> None:
+    client = TaggingErrorClient(client_error("AccessDenied", status=403))
+    with pytest.raises(ClientError):
+        put_object_tags(cast(S3Client, cast(object, client)), "bucket", "key", {"kind": "source"})
+
+
+@pytest.mark.unit()
+def test_is_not_implemented_error_detects_code_and_status() -> None:
+    assert is_not_implemented_error(client_error("NotImplemented", status=501)) is True
+    assert is_not_implemented_error(client_error("NotImplemented", status=400)) is True
+    assert is_not_implemented_error(client_error("AccessDenied", status=501)) is True
+    assert is_not_implemented_error(client_error("AccessDenied", status=403)) is False
+
+
+@pytest.mark.unit()
+def test_is_not_implemented_error_handles_malformed_responses() -> None:
+    not_implemented_in_garbage = FakeClientError("NotImplemented", 200)
+    not_implemented_in_garbage.response = cast(  # pyright: ignore[reportAttributeAccessIssue]
+        Mapping[str, object], {"Error": "bad", "ResponseMetadata": "bad"}
+    )
+    assert is_not_implemented_error(not_implemented_in_garbage) is False
 
 
 class _RecordHandler(logging.Handler):

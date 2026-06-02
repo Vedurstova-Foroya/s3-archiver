@@ -3,10 +3,21 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from copy import deepcopy
+from datetime import UTC, datetime
 from typing import cast
 
 from botocore.exceptions import ClientError, EndpointConnectionError
+
+_DEFAULT_PARSER_SAMPLE_KEY = "2024-01-01T00:00:00Z_object.bin"
+
+
+def _list_response(keys: tuple[str, ...]) -> dict[str, object]:
+    contents = [
+        {"Key": key, "Size": 1, "LastModified": datetime(2024, 1, 1, tzinfo=UTC)} for key in keys
+    ]
+    return {"Contents": contents, "IsTruncated": False}
 
 
 class SuccessfulClient:
@@ -14,9 +25,16 @@ class SuccessfulClient:
 
     called_bucket: str | None = None
     _versioning_status: str | None
+    _sample_keys: tuple[str, ...]
 
-    def __init__(self, versioning_status: str | None = "Enabled") -> None:
+    def __init__(
+        self,
+        versioning_status: str | None = "Enabled",
+        *,
+        sample_keys: tuple[str, ...] = (_DEFAULT_PARSER_SAMPLE_KEY,),
+    ) -> None:
         self._versioning_status = versioning_status
+        self._sample_keys = sample_keys
 
     def head_bucket(self, *, Bucket: str) -> None:  # noqa: N803
         self.called_bucket = Bucket
@@ -26,6 +44,24 @@ class SuccessfulClient:
         if self._versioning_status is None:
             return {}
         return {"Status": self._versioning_status}
+
+    def list_objects_v2(self, **kwargs: object) -> Mapping[str, object]:
+        _ = kwargs
+        return _list_response(self._sample_keys)
+
+    def list_object_versions(self, **kwargs: object) -> Mapping[str, object]:
+        _ = kwargs
+        versions = [
+            {
+                "Key": key,
+                "Size": 1,
+                "LastModified": datetime(2024, 1, 1, tzinfo=UTC),
+                "IsLatest": True,
+                "VersionId": "v1",
+            }
+            for key in self._sample_keys
+        ]
+        return {"Versions": versions, "IsTruncated": False}
 
 
 class AuthFailingClient:

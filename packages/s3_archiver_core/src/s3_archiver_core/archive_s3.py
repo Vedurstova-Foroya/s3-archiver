@@ -13,6 +13,7 @@ from s3_archiver_core._archive_s3_helpers import (
     ReadableBody,
     close_body,
     is_not_found_error,
+    is_not_implemented_error,
     object_list,
     optional_string,
     parse_versioning_state,
@@ -43,8 +44,18 @@ class S3ArchiveBucket:
     temp_dir: Path = field(default_factory=default_temp_dir)
 
     def versioning_state(self) -> VersioningState:
-        """Return the bucket versioning state."""
-        response = self.client.get_bucket_versioning(Bucket=self.bucket)
+        """Return the bucket versioning state.
+
+        OCI Object Storage and similar providers may reject GetBucketVersioning
+        with NotImplemented; treat that as Disabled so listing falls back to
+        list_objects_v2 instead of list_object_versions.
+        """
+        try:
+            response = self.client.get_bucket_versioning(Bucket=self.bucket)
+        except ClientError as exc:
+            if is_not_implemented_error(exc):
+                return "Disabled"
+            raise
         return parse_versioning_state(response.get("Status"))
 
     def list_source_objects(
@@ -125,8 +136,19 @@ class S3ArchiveBucket:
         )
 
     def get_tags(self, key: str, version_id: str | None = None) -> Mapping[str, str]:
-        """Return object tags as a string mapping."""
-        response = self.client.get_object_tagging(**versioned_kwargs(self.bucket, key, version_id))
+        """Return object tags as a string mapping.
+
+        OCI Object Storage does not implement S3 object tagging; treat
+        NotImplemented as an empty tag set so archiving can proceed.
+        """
+        try:
+            response = self.client.get_object_tagging(
+                **versioned_kwargs(self.bucket, key, version_id)
+            )
+        except ClientError as exc:
+            if is_not_implemented_error(exc):
+                return {}
+            raise
         tag_set = response.get("TagSet", [])
         if not isinstance(tag_set, list):
             return {}

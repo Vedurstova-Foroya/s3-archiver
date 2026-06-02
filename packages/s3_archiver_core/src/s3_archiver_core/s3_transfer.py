@@ -12,6 +12,7 @@ from s3_archiver_core._archive_s3_helpers import (
     ReadableBody,
     close_body,
     copy_source_kwargs,
+    put_object_tags,
     versioned_kwargs,
 )
 from s3_archiver_core.s3 import S3_CHUNK_BYTES, S3Client, S3ObjectProperties, TransferStrategy
@@ -148,7 +149,7 @@ def _multipart_copy(
     except Exception:
         _safe_abort_multipart(client, bucket, key, upload_id)
         raise
-    _put_tags(client, bucket, key, properties.tags)
+    put_object_tags(client, bucket, key, properties.tags)
 
 
 def _upload_stream(
@@ -161,7 +162,7 @@ def _upload_stream(
 ) -> None:
     if properties.size == 0:
         _ = client.put_object(**_object_kwargs(bucket, key, properties, metadata), Body=b"")
-        _put_tags(client, bucket, key, properties.tags)
+        put_object_tags(client, bucket, key, properties.tags)
         return
     upload_id = _upload_id(
         client.create_multipart_upload(**_object_kwargs(bucket, key, properties, metadata))
@@ -182,7 +183,7 @@ def _upload_stream(
     except Exception:
         _safe_abort_multipart(client, bucket, key, upload_id)
         raise
-    _put_tags(client, bucket, key, properties.tags)
+    put_object_tags(client, bucket, key, properties.tags)
 
 
 def _safe_abort_multipart(client: S3Client, bucket: str, key: str, upload_id: str) -> None:
@@ -266,11 +267,6 @@ def _complete(
     _ = client.complete_multipart_upload(
         Bucket=bucket, Key=key, UploadId=upload_id, MultipartUpload={"Parts": parts}
     )
-
-
-def _put_tags(client: S3Client, bucket: str, key: str, tags: Mapping[str, str]) -> None:
-    tag_set = [{"Key": tag_key, "Value": value} for tag_key, value in sorted(tags.items())]
-    _ = client.put_object_tagging(Bucket=bucket, Key=key, Tagging={"TagSet": tag_set})
 
 
 def _upload_id(response: Mapping[str, object]) -> str:

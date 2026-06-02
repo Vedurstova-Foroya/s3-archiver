@@ -123,6 +123,9 @@ def test_run_health_check_validates_all_configured_routes(
             "parser": "filename_timestamp",
             "copy_mode": "daily_tar_gz",
             "source_versioning": "Enabled",
+            "parser_sample_count": 1,
+            "parser_match_count": 1,
+            "parser_skip_examples": [],
         },
         {
             "name": "secondary",
@@ -139,6 +142,9 @@ def test_run_health_check_validates_all_configured_routes(
             "parser": "direct",
             "copy_mode": "direct",
             "source_versioning": "Suspended",
+            "parser_sample_count": 1,
+            "parser_match_count": 1,
+            "parser_skip_examples": [],
         },
     ]
     assert built_buckets == [

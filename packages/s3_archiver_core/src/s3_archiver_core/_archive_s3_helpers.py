@@ -2,13 +2,19 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping
 from datetime import datetime
 from typing import Protocol, cast
 
 from botocore.exceptions import ClientError
 
-from s3_archiver_core.s3 import S3ObjectProperties, VersioningState, checksums_from_head_fields
+from s3_archiver_core.s3 import (
+    S3Client,
+    S3ObjectProperties,
+    VersioningState,
+    checksums_from_head_fields,
+)
 
 
 class ReadableBody(Protocol):
@@ -94,6 +100,43 @@ def supports_checksum_mode(exc: ClientError) -> bool:
     if isinstance(metadata, dict):
         status = cast(Mapping[object, object], metadata).get("HTTPStatusCode")
     return status in {400, 403}
+
+
+def is_not_implemented_error(exc: ClientError) -> bool:
+    """Return True when the provider reports the operation is unsupported.
+
+    OCI Object Storage returns this for tagging and may return it for other
+    operations (e.g. GetBucketVersioning) that have no S3-compatible equivalent
+    in its own data model.
+    """
+
+    response = cast(Mapping[str, object], exc.response)
+    error = response.get("Error")
+    metadata = response.get("ResponseMetadata")
+    code = None
+    status = None
+    if isinstance(error, dict):
+        code = cast(Mapping[object, object], error).get("Code")
+    if isinstance(metadata, dict):
+        status = cast(Mapping[object, object], metadata).get("HTTPStatusCode")
+    return str(code) == "NotImplemented" or status == 501
+
+
+def put_object_tags(client: S3Client, bucket: str, key: str, tags: Mapping[str, str]) -> None:
+    """Apply tags to an object, gracefully skipping providers that reject tagging."""
+
+    if not tags:
+        return
+    tag_set = [{"Key": tag_key, "Value": value} for tag_key, value in sorted(tags.items())]
+    try:
+        _ = client.put_object_tagging(Bucket=bucket, Key=key, Tagging={"TagSet": tag_set})
+    except ClientError as exc:
+        if not is_not_implemented_error(exc):
+            raise
+        logging.getLogger("s3_archiver.archive").warning(
+            "destination does not support object tagging; tags dropped",
+            extra={"event": "archive.tagging.unsupported", "bucket": bucket, "key": key},
+        )
 
 
 def object_list(value: object) -> list[Mapping[str, object]]:

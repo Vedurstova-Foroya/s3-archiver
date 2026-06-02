@@ -10,9 +10,23 @@ from pathlib import Path
 from botocore.exceptions import BotoCoreError, ClientError
 
 from s3_archiver_core._archive_s3_helpers import parse_versioning_state
+from s3_archiver_core.archive_s3 import S3ArchiveBucket
 from s3_archiver_core.errors import HealthCheckError
+from s3_archiver_core.parsers.protocol import ParserContext
+from s3_archiver_core.parsers.registry import parser_for_kind
+from s3_archiver_core.parsers.results import SelectedObject
 from s3_archiver_core.s3 import S3Client, VersioningState, build_s3_client
 from s3_archiver_core.settings import AppSettings, RouteSettings, S3LocationSettings
+
+PARSER_SAMPLE_LIMIT = 25
+PARSER_SKIP_EXAMPLE_LIMIT = 3
+
+
+@dataclass(frozen=True, slots=True)
+class _ParserSample:
+    sampled: int
+    matched: int
+    skip_examples: tuple[str, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,8 +45,11 @@ class RouteHealthReport:
     parser: str
     copy_mode: str
     source_versioning: VersioningState
+    parser_sample_count: int = 0
+    parser_match_count: int = 0
+    parser_skip_examples: tuple[str, ...] = ()
 
-    def as_dict(self) -> dict[str, str]:
+    def as_dict(self) -> dict[str, object]:
         """Return one JSON-serializable route health payload."""
 
         return {
@@ -48,6 +65,9 @@ class RouteHealthReport:
             "parser": self.parser,
             "copy_mode": self.copy_mode,
             "source_versioning": self.source_versioning,
+            "parser_sample_count": self.parser_sample_count,
+            "parser_match_count": self.parser_match_count,
+            "parser_skip_examples": list(self.parser_skip_examples),
         }
 
 
@@ -139,21 +159,24 @@ def run_health_check(settings: AppSettings, log_file: Path) -> HealthReport:
 def _check_routes(routes: tuple[RouteSettings, ...]) -> tuple[RouteHealthReport, ...]:
     reports: list[RouteHealthReport] = []
     for route in routes:
-        route_source_versioning = _check_route(route)
-        reports.append(_route_report(route, route_source_versioning))
+        source_versioning, sample = _check_route(route)
+        reports.append(_route_report(route, source_versioning, sample))
     return tuple(reports)
 
 
-def _check_route(route: RouteSettings) -> VersioningState:
+def _check_route(route: RouteSettings) -> tuple[VersioningState, _ParserSample]:
     source_client = build_s3_client(route.source)
     _check_bucket_access(source_client, route.source, f"route {route.name!r} source")
     source_versioning = _source_versioning(source_client, route.source)
     destination_client = build_s3_client(route.destination)
     _check_bucket_access(destination_client, route.destination, f"route {route.name!r} destination")
-    return source_versioning
+    sample = _check_route_parser(route, source_client, source_versioning)
+    return source_versioning, sample
 
 
-def _route_report(route: RouteSettings, source_versioning: VersioningState) -> RouteHealthReport:
+def _route_report(
+    route: RouteSettings, source_versioning: VersioningState, sample: _ParserSample
+) -> RouteHealthReport:
     return RouteHealthReport(
         name=route.name,
         source_provider=route.source.provider.value,
@@ -167,7 +190,56 @@ def _route_report(route: RouteSettings, source_versioning: VersioningState) -> R
         parser=route.parser.value,
         copy_mode=route.copy_mode.value,
         source_versioning=source_versioning,
+        parser_sample_count=sample.sampled,
+        parser_match_count=sample.matched,
+        parser_skip_examples=sample.skip_examples,
     )
+
+
+def _check_route_parser(
+    route: RouteSettings, client: S3Client, versioning_state: VersioningState
+) -> _ParserSample:
+    """Sample up to PARSER_SAMPLE_LIMIT keys and verify the parser matches them.
+
+    Fails when the source has objects under the configured prefix but none of
+    the sampled keys produce a SelectedObject. An empty prefix passes through
+    silently (the bucket may not have been populated yet).
+    """
+
+    parser = parser_for_kind(route.parser)
+    bucket = S3ArchiveBucket(client, route.source.bucket)
+    sampled = 0
+    matched = 0
+    skip_examples: list[str] = []
+    try:
+        for listed in bucket.list_source_objects(versioning_state, prefix=route.source.path):
+            if sampled >= PARSER_SAMPLE_LIMIT:
+                break
+            sampled += 1
+            context = ParserContext(listed, listed.properties)
+            try:
+                result = parser.parse(listed, context)
+            except ValueError as exc:
+                if len(skip_examples) < PARSER_SKIP_EXAMPLE_LIMIT:
+                    skip_examples.append(f"{listed.key}: parser error: {exc}")
+                continue
+            if isinstance(result, SelectedObject):
+                matched += 1
+            elif len(skip_examples) < PARSER_SKIP_EXAMPLE_LIMIT:
+                skip_examples.append(f"{listed.key}: {result.reason}")
+    except (BotoCoreError, ClientError) as exc:
+        raise HealthCheckError(
+            f"Failed to sample source objects for route {route.name!r}: {exc}"
+        ) from exc
+    if sampled > 0 and matched == 0:
+        examples = "; ".join(skip_examples)
+        location = f"{route.source.bucket}/{route.source.path}"
+        message = (
+            f"route {route.name!r} parser {route.parser.value!r} matched 0 of "
+            f"{sampled} sampled object(s) under {location}; examples: {examples}"
+        )
+        raise HealthCheckError(message)
+    return _ParserSample(sampled, matched, tuple(skip_examples))
 
 
 def _check_bucket_access(client: S3Client, location: S3LocationSettings, side: str) -> None:
