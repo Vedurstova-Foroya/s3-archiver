@@ -49,6 +49,7 @@ class ArchiveCommandPayload(TypedDict):
     source_bucket: str
     destination_bucket: str
     source_object_count: int
+    skipped_object_count: int
     phases: dict[str, ArchivePhasePayload]
 
 

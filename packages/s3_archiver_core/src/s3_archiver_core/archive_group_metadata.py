@@ -43,6 +43,18 @@ def existing_archive_verified(
     return archive_sha256 is not None
 
 
+def existing_archive_refreshable(existing: Mapping[str, str], expected: Mapping[str, str]) -> bool:
+    """Return whether a mismatched existing archive may be replaced."""
+
+    return (
+        existing.get(SCHEMA_VERSION_METADATA_KEY) == ARCHIVE_SCHEMA_VERSION
+        and existing.get(ARCHIVE_SHA256_METADATA_KEY) is not None
+        and existing.get(TARGET_DAY_METADATA_KEY) == expected.get(TARGET_DAY_METADATA_KEY)
+        and existing.get(SOURCE_COUNT_METADATA_KEY) is not None
+        and existing.get(SOURCE_COUNT_METADATA_KEY) != expected.get(SOURCE_COUNT_METADATA_KEY)
+    )
+
+
 def uploaded_archive_verified(
     destination: ArchiveBucket,
     destination_key: str,

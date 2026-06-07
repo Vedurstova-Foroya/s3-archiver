@@ -116,6 +116,7 @@ def iter_archive_manifest_items(
         destination_identity=destination_identity or storage_identity(destination),
     )
     run_started = as_utc(run_started_at_utc)
+    run_started_day = run_started.date()
     max_source_size = max_source_object_size_bytes()
     for listed in _list_source_objects(source, versioning_state, context.source_path):
         if context.source_path and not listed.key.startswith(context.source_path):
@@ -130,10 +131,10 @@ def iter_archive_manifest_items(
             yield context.skipped_object(listed, selected.reason)
             continue
         timestamp = as_utc(selected.timestamp)
-        if timestamp > run_started:
+        if timestamp.date() >= run_started_day:
             yield context.skipped_object(
                 listed,
-                "parser timestamp after run start",
+                "parser timestamp in incomplete UTC day",
                 selected_timestamp=timestamp,
                 timestamp_source=selected.timestamp_source,
                 target_day=timestamp.date(),

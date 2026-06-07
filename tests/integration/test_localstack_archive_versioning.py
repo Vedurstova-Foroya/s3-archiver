@@ -21,7 +21,7 @@ from tests.integration.archive_cli_test_support import archive_client as _client
 from tests.integration.archive_cli_test_support import archive_env as _archive_env
 from tests.integration.archive_cli_test_support import run_archive_command as _run_archive
 
-TARGET_DAY = "2099-12-31"
+TARGET_DAY = "2099-12-30"
 
 
 class DeleteObjectClient(Protocol):

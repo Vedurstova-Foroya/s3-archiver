@@ -26,8 +26,9 @@ from tests.integration.archive_cli_test_support import archive_client as _client
 from tests.integration.archive_cli_test_support import archive_env as _archive_env
 from tests.integration.archive_cli_test_support import run_archive_command as _run_archive
 
-TARGET_DAY = "2099-12-31"
+TARGET_DAY = "2099-12-30"
 TARGET_ARCHIVE_KEY = f"archive/{TARGET_DAY}.tar.gz"
+INCOMPLETE_DAY = "2099-12-31"
 
 
 @pytest.mark.integration()
@@ -158,7 +159,7 @@ def test_archive_command_direct_route_copies_source_path_without_deleting_source
 
 
 @pytest.mark.integration()
-def test_archive_command_filename_parser_skips_timestamps_after_frozen_run_start(
+def test_archive_command_filename_parser_skips_incomplete_utc_day(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     localstack_bucket_pair: LocalstackBucketPair,
@@ -167,35 +168,20 @@ def test_archive_command_filename_parser_skips_timestamps_after_frozen_run_start
     env = _archive_env(tmp_path, localstack_bucket_pair)
     source_client = _client(env, "source")
     destination_client = _client(env, "destination")
-    eligible_keys = {
-        f"{prefix}/2099-12-31T11-59-59-before.txt",
-        f"{prefix}/2099-12-31T12-00-00-equal.txt",
+    seed_keys = {
+        f"{prefix}/{INCOMPLETE_DAY}T00-00-00-start.txt",
+        f"{prefix}/{INCOMPLETE_DAY}T11-59-59-before.txt",
+        f"{prefix}/{INCOMPLETE_DAY}T12-00-01-after.txt",
     }
-    future_key = f"{prefix}/2099-12-31T12-00-01-future.txt"
-    seed_keys = eligible_keys | {future_key}
     for key in seed_keys:
         _ = put_test_object(source_client, localstack_bucket_pair.source, key)
 
     payload = _run_archive(monkeypatch, env)
 
     assert payload["status"] == "ok"
-    assert payload["source_object_count"] == len(eligible_keys)
-    archive_keys = {
-        f"{prefix}/2099-12-31.tar.gz",
-    }
-    assert listed_keys(destination_client, localstack_bucket_pair.destination) == archive_keys
-    assert read_tar_gz_members_text(
-        destination_client,
-        localstack_bucket_pair.destination,
-        f"{prefix}/2099-12-31.tar.gz",
-    ) == {
-        f"{prefix}/2099-12-31T11-59-59-before.txt": (
-            f"payload for {prefix}/2099-12-31T11-59-59-before.txt\n"
-        ),
-        f"{prefix}/2099-12-31T12-00-00-equal.txt": (
-            f"payload for {prefix}/2099-12-31T12-00-00-equal.txt\n"
-        ),
-    }
+    assert payload["source_object_count"] == 0
+    assert payload["skipped_object_count"] == len(seed_keys)
+    assert listed_keys(destination_client, localstack_bucket_pair.destination) == set()
     assert listed_keys(source_client, localstack_bucket_pair.source) == seed_keys
 
 

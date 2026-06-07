@@ -5,17 +5,11 @@ from __future__ import annotations
 import logging
 import os
 import time
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterator
 from contextlib import contextmanager
-from datetime import date
 from threading import Event, Timer
 
 from s3_archiver_core._archive_manifest_models import ManifestEntry
-from s3_archiver_core.archive_group_metadata import (
-    ARCHIVE_SHA256_METADATA_KEY,
-    MANIFEST_SHA256_METADATA_KEY,
-    SOURCE_COUNT_METADATA_KEY,
-)
 
 _LOGGER = logging.getLogger("s3_archiver.archive")
 _LONG_OBJECT_LOG_SECONDS_ENV = "ARCHIVER_LONG_OBJECT_LOG_SECONDS"
@@ -172,39 +166,6 @@ def _object_context(
         "destination_key": destination_key,
         "size_bytes": size_bytes,
     }
-
-
-def log_in_progress_day_overwrite(
-    *,
-    destination_bucket: str,
-    destination_key: str,
-    target_day: date,
-    existing_metadata: Mapping[str, str],
-    expected_metadata: Mapping[str, str],
-) -> None:
-    """Record a structured warning when overwriting today's archive on mismatch.
-
-    Today's archive contains only objects with parser timestamps up to the run
-    start, so a later run with newer source objects legitimately produces a
-    different manifest. Replace the stale archive instead of failing the run.
-    """
-
-    _LOGGER.warning(
-        "archive overwrite in-progress day destination_key=%s target_day=%s",
-        destination_key,
-        target_day.isoformat(),
-        extra={
-            "event": "archive.copy.overwrite_in_progress_day",
-            "destination_bucket": destination_bucket,
-            "destination_key": destination_key,
-            "target_day": target_day.isoformat(),
-            "existing_manifest_sha256": existing_metadata.get(MANIFEST_SHA256_METADATA_KEY),
-            "existing_source_count": existing_metadata.get(SOURCE_COUNT_METADATA_KEY),
-            "existing_archive_sha256": existing_metadata.get(ARCHIVE_SHA256_METADATA_KEY),
-            "expected_manifest_sha256": expected_metadata.get(MANIFEST_SHA256_METADATA_KEY),
-            "expected_source_count": expected_metadata.get(SOURCE_COUNT_METADATA_KEY),
-        },
-    )
 
 
 def _large_object_log_bytes() -> int:

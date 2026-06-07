@@ -3,7 +3,6 @@ from __future__ import annotations
 import tempfile
 from collections.abc import Callable, Sequence
 from dataclasses import replace
-from datetime import date
 from pathlib import Path
 from threading import Lock
 
@@ -15,7 +14,6 @@ from s3_archiver_core._archive_copy_routes import (
 from s3_archiver_core._archive_manifest_models import ArchiveGroup, ArchiveManifest, ManifestEntry
 from s3_archiver_core._archive_object_activity import (
     entry_activity_watchdog,
-    log_in_progress_day_overwrite,
     log_large_entry,
 )
 from s3_archiver_core._archive_parallel import run_parallel_items
@@ -25,6 +23,7 @@ from s3_archiver_core._archive_size_limits import estimated_archive_size_bytes
 from s3_archiver_core._archive_verify_direct import verify_direct_entry
 from s3_archiver_core.archive_group_metadata import (
     ARCHIVE_SHA256_METADATA_KEY,
+    existing_archive_refreshable,
     existing_archive_verified,
     group_metadata,
     uploaded_archive_verified,
@@ -56,7 +55,6 @@ def copy_phase(
     """Copy direct entries and daily archive groups with one worker per route."""
 
     progress = PhaseProgress("copy", len(manifest.entries), progress_logger)
-    in_progress_day = manifest.run_started_at_utc.date()
     verified: dict[GroupIdentity, ArchiveGroup] = {}
     verified_entries: dict[EntryIdentity, ManifestEntry] = {}
     result_lock = Lock()
@@ -81,7 +79,6 @@ def copy_phase(
                 group,
                 debug_logger,
                 progress_logger=progress.advance,
-                in_progress_day=in_progress_day,
             )
             if failure is not None:
                 failures.append(failure)
@@ -163,7 +160,6 @@ def copy_group(
     debug_logger: DebugLogger | None,
     *,
     progress_logger: ProgressAdvance | None = None,
-    in_progress_day: date | None = None,
 ) -> tuple[str | None, bool]:
     destination_key = group.destination_archive_key
     metadata = group_metadata(group)
@@ -172,15 +168,8 @@ def copy_group(
         if existing_archive_verified(destination, destination_key, existing.metadata, metadata):
             _advance_group_progress(group, progress_logger)
             return None, True
-        if in_progress_day is None or group.target_day != in_progress_day:
+        if not existing_archive_refreshable(existing.metadata, metadata):
             return f"{destination_key}: archive verification failed", False
-        log_in_progress_day_overwrite(
-            destination_bucket=destination.bucket,
-            destination_key=destination_key,
-            target_day=group.target_day,
-            existing_metadata=existing.metadata,
-            expected_metadata=metadata,
-        )
     archive_path: Path | None = None
     try:
         if debug_logger is not None:

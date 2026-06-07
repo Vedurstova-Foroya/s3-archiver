@@ -44,7 +44,7 @@ def test_canonical_timestamp_dataset_archives_each_selected_day() -> None:
         clock=_clock,
     )
 
-    expected_days = CANONICAL_DAYS
+    expected_days = tuple(day for day in CANONICAL_DAYS if day > 0)
     expected_keys = [
         f"{prefix}/{(STARTED.date() - timedelta(days=day)).isoformat()}T00-00-00.txt"
         for day in expected_days
@@ -58,3 +58,6 @@ def test_canonical_timestamp_dataset_archives_each_selected_day() -> None:
     assert [entry.key for entry in result.manifest.entries] == expected_keys
     assert destination.uploaded == expected_archive_keys
     assert destination.copied == []
+    assert [item.key for item in result.manifest.skipped_objects] == [
+        f"{prefix}/{STARTED.date().isoformat()}T00-00-00.txt"
+    ]
