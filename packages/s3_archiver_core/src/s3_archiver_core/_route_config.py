@@ -25,7 +25,7 @@ from s3_archiver_core._settings_models import (
     S3LocationSettings,
     S3Provider,
 )
-from s3_archiver_core._settings_parse import EnvDecoder
+from s3_archiver_core._settings_parse import EnvDecoder, parse_bool_result
 from s3_archiver_core._settings_parse import parse_runtime_duration_result as _duration_result
 from s3_archiver_core.parsers import registry as _parser_registry
 from s3_archiver_core.parsers.kinds import ParserKind
@@ -42,19 +42,20 @@ def load_app_settings_from_config_json[T](
     log_level: str,
 ) -> T:
     """Build app settings from the route JSON env value."""
-
     routes = _load_route_settings(decoder, raw_config)
     run_timeout = decoder.consume(
         _duration_result(decoder.env.get("ARCHIVER_RUN_TIMEOUT", "7d"), "ARCHIVER_RUN_TIMEOUT")
     )
+    cleanup_enabled = decoder.consume(parse_bool_result(decoder.env, "CLEANUP", default=False))
     decoder.finish()
-    assert routes is not None and run_timeout is not None
+    assert routes is not None and run_timeout is not None and cleanup_enabled is not None
     return settings_type(
         run_timeout=run_timeout,
         temp_dir=Path(decoder.env.get("ARCHIVER_TEMP_DIR", str(default_temp_dir()))),
         log_level=log_level,
         log_dir=Path(decoder.env.get("LOG_DIR", "/var/log/s3-archiver")),
         routes=routes,
+        cleanup_enabled=cleanup_enabled,
     )
 
 
@@ -258,7 +259,6 @@ def _location_string(
         if required:
             return _required_string(decoder, location, key, field)
         return _optional_string(decoder, location, key, field, default=default)
-
     for env_key in _location_env_keys(side, key, shared=shared):
         env_value = decoder.env.get(env_key)
         if env_value is not None and env_value.strip() != "":

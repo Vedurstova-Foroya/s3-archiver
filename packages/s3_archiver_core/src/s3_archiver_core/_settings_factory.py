@@ -27,6 +27,7 @@ class AppSettingsFactory[T](Protocol):
         log_level: str,
         log_dir: Path,
         routes: tuple[RouteSettings, ...],
+        cleanup_enabled: bool,
     ) -> T:
         """Build settings from decoded fields."""
         ...

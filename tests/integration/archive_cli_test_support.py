@@ -53,6 +53,14 @@ class ArchiveCommandPayload(TypedDict):
     phases: dict[str, ArchivePhasePayload]
 
 
+class CleanupCommandPayload(TypedDict):
+    status: str
+    object_count: int
+    cleaned_count: int
+    removed_manifest_count: int
+    failure_count: int
+
+
 def archive_env(tmp_path: Path, bucket_pair: LocalstackBucketPair) -> dict[str, str]:
     env = localstack_test_env(
         bucket_pair,
@@ -131,6 +139,23 @@ def run_archive_command(
             assert result.exit_code == 0, result.stderr
         time.sleep(0.5)
     raise AssertionError("archive retry loop exhausted without returning")
+
+
+def run_cleanup_command(
+    monkeypatch: pytest.MonkeyPatch,
+    env: dict[str, str],
+    *,
+    attempts: int = 3,
+) -> CleanupCommandPayload:
+    monkeypatch.setattr(os, "environ", env)
+    for attempt in range(attempts):
+        result = RUNNER.invoke(cli_module.app, ["cleanup-once"])
+        if result.exit_code == 0 and result.stderr == "":
+            return cast(CleanupCommandPayload, cast(object, last_json_object(result.stdout)))
+        if attempt == attempts - 1 or not _is_retryable_archive_failure(result.stderr):
+            assert result.exit_code == 0, result.stderr
+        time.sleep(0.5)
+    raise AssertionError("cleanup retry loop exhausted without returning")
 
 
 def _is_retryable_archive_failure(stderr: str) -> bool:

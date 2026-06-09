@@ -87,6 +87,10 @@ class S3ArchiveBucket:
         tags = self.get_tags(key, version_id)
         return properties_from_head(head, tags)
 
+    def delete_source_object(self, key: str, version_id: str | None = None) -> None:
+        """Delete one source object, targeting the exact version when supplied."""
+        _ = self.client.delete_object(**versioned_kwargs(self.bucket, key, version_id))
+
     def content_sha256(self, key: str, version_id: str | None = None) -> str | None:
         """Return the SHA-256 digest of object content when present."""
         try:

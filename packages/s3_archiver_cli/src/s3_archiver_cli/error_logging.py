@@ -14,6 +14,8 @@ from s3_archiver_core.archive_payloads import (
 )
 from s3_archiver_core.errors import (
     ArchiveRunError,
+    CleanupError,
+    CleanupManifestError,
     ConfigError,
     HealthCheckError,
     LoggingError,
@@ -144,6 +146,8 @@ def error_payload(
         if isinstance(error, ConfigError)
         else "archive.run"
         if isinstance(error, ArchiveRunError)
+        else "cleanup.run"
+        if isinstance(error, (CleanupError, CleanupManifestError))
         else "startup.preflight"
     )
     return {

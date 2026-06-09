@@ -33,6 +33,9 @@ class EmptyBucket:
         _ = (key, version_id)
         return None
 
+    def delete_source_object(self, key: str, version_id: str | None = None) -> None:
+        raise AssertionError(f"empty manifest must not delete {key!r} {version_id!r}")
+
     def content_sha256(self, key: str, version_id: str | None = None) -> str | None:
         _ = (key, version_id)
         return None
