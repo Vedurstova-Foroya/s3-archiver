@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -23,6 +23,12 @@ from s3_archiver_core._archive_s3_helpers import (
     version_id,
     versioned_kwargs,
 )
+from s3_archiver_core.archive_s3_deletes import (
+    delete_source_object as _delete_source_object,
+)
+from s3_archiver_core.archive_s3_deletes import (
+    delete_source_objects as _delete_source_objects,
+)
 from s3_archiver_core.archive_transfer import TransferStrategy
 from s3_archiver_core.s3 import (
     S3_CHUNK_BYTES,
@@ -32,6 +38,7 @@ from s3_archiver_core.s3 import (
     VersioningState,
 )
 from s3_archiver_core.s3_transfer import copy_s3_object, upload_s3_file
+from s3_archiver_core.source_deletes import SourceDeleteFailure, SourceDeleteRequest
 from s3_archiver_core.temp_files import default_temp_dir
 
 
@@ -87,9 +94,17 @@ class S3ArchiveBucket:
         tags = self.get_tags(key, version_id)
         return properties_from_head(head, tags)
 
-    def delete_source_object(self, key: str, version_id: str | None = None) -> None:
+    def delete_source_object(
+        self, key: str, version_id: str | None = None, *, if_match: str | None = None
+    ) -> None:
         """Delete one source object, targeting the exact version when supplied."""
-        _ = self.client.delete_object(**versioned_kwargs(self.bucket, key, version_id))
+        _delete_source_object(self.client, self.bucket, key, version_id, if_match=if_match)
+
+    def delete_source_objects(
+        self, objects: Sequence[SourceDeleteRequest]
+    ) -> tuple[SourceDeleteFailure, ...]:
+        """Delete source objects in S3 DeleteObjects batches."""
+        return _delete_source_objects(self.client, self.bucket, objects)
 
     def content_sha256(self, key: str, version_id: str | None = None) -> str | None:
         """Return the SHA-256 digest of object content when present."""

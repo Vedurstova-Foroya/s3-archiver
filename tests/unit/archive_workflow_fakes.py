@@ -119,6 +119,7 @@ class FakeBucket:
     copy_strategies: list[TransferStrategy]
     uploaded: list[str]
     deleted: list[tuple[str, str | None]]
+    delete_conditions: list[str | None]
     fail_copy: bool
     fail_delete: bool
     skip_actual_delete: bool
@@ -148,6 +149,7 @@ class FakeBucket:
         self.copy_strategies = []
         self.uploaded = []
         self.deleted = []
+        self.delete_conditions = []
         self.fail_copy = False
         self.fail_delete = False
         self.skip_actual_delete = False
@@ -188,10 +190,17 @@ class FakeBucket:
             return source.properties
         return None
 
-    def delete_source_object(self, key: str, version_id: str | None = None) -> None:
+    def delete_source_object(
+        self, key: str, version_id: str | None = None, *, if_match: str | None = None
+    ) -> None:
         self.deleted.append((key, version_id))
+        self.delete_conditions.append(if_match)
         if self.fail_delete:
             raise RuntimeError("delete failed")
+        if if_match is not None:
+            current = self.head_object(key, version_id)
+            if current is None or current.etag != if_match:
+                raise RuntimeError("delete precondition failed")
         if self.skip_actual_delete:
             return
         _ = self._objects.pop(key, None)

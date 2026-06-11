@@ -50,7 +50,15 @@ def test_run_archive_chains_cleanup_when_enabled(
     assert payload["status"] == "ok"
     assert cleanup["status"] == "ok"
     assert cleanup["cleaned_count"] == 1
-    assert deletes == [{"Bucket": "archive-bucket", "Key": "data/a.xml", "VersionId": "v1"}]
+    assert deletes == [
+        {
+            "Bucket": "archive-bucket",
+            "Delete": {
+                "Objects": [{"Key": "data/a.xml", "VersionId": "v1"}],
+                "Quiet": True,
+            },
+        }
+    ]
     assert not (settings.cleanup_pending_dir / "locked-run.jsonl").exists()
 
 

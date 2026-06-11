@@ -16,10 +16,7 @@ import typer
 from s3_archiver_core.archive import ArchiveRoute, ArchiveRunResult, run_archive
 from s3_archiver_core.archive_lock import FileArchiveRunLock
 from s3_archiver_core.archive_routes import archive_routes_from_settings
-from s3_archiver_core.errors import (
-    ArchiveRunError,
-    S3ArchiverError,
-)
+from s3_archiver_core.errors import ArchiveRunError, S3ArchiverError
 from s3_archiver_core.health import run_health_check
 from s3_archiver_core.logging_config import configure_logging
 from s3_archiver_core.payload_utils import JsonValue
@@ -102,7 +99,6 @@ def schedule(
     daily_at_utc: Annotated[str, typer.Option(envvar="ARCHIVER_SCHEDULE_UTC")] = "02:00",
 ) -> None:
     """Run one archive invocation per UTC day without catch-up replay."""
-
     settings: AppSettings | None = None
     try:
         settings, log_file = _load_settings_and_log_file()
@@ -110,7 +106,9 @@ def schedule(
     except S3ArchiverError as exc:
         _raise_cli_error(exc, settings)
     hour, minute = _parse_daily_at_utc(daily_at_utc)
-    if not reconcile_archive_lock(settings, recovery_logger=_log_lock_recovery):
+    if not reconcile_archive_lock(
+        settings, recovery_logger=_log_lock_recovery, recover_unknown_host=True
+    ):
         log_lock_reconcile_failed()
     flag = ShutdownFlag()
     previous = install_schedule_signals(flag)
@@ -118,10 +116,10 @@ def schedule(
         run_schedule_loop(
             flag,
             run_once=lambda: run_scheduled_archive(
-                settings, log_file, recovery_logger=_log_lock_recovery
+                settings, log_file, recovery_logger=_log_lock_recovery, shutdown_event=flag.event
             ),
             sleep_until_next_tick=lambda backoff: _sleep_until_next_daily_tick(
-                hour, minute, extra_delay_seconds=backoff
+                hour, minute, extra_delay_seconds=backoff, sleep=flag.sleep
             ),
             report_error=lambda exc: _emit_cli_error(exc, settings),
         )
@@ -288,12 +286,13 @@ def _sleep_until_next_daily_tick(
     minute: int,
     *,
     extra_delay_seconds: float = 0.0,
+    sleep: Callable[[float], None] | None = None,
 ) -> None:
     sleep_until_next_daily_tick(
         hour,
         minute,
         now=lambda: datetime.now(tz=UTC),
         logger=logging.getLogger("s3_archiver.archive"),
-        sleep=time.sleep,
+        sleep=time.sleep if sleep is None else sleep,
         extra_delay_seconds=extra_delay_seconds,
     )

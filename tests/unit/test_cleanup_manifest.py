@@ -53,6 +53,26 @@ def test_write_validate_and_iter_round_trip(tmp_path: Path) -> None:
 
 
 @pytest.mark.unit()
+def test_validate_and_iter_stream_without_reading_whole_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "run-1.jsonl"
+    records = [_record("data/a.xml", "v1"), _record("data/b.xml", None)]
+    summary = write_cleanup_manifest(
+        path, run_id="run-1", run_started_at_utc=RUN_STARTED, records=records
+    )
+
+    def fail_read_text(self: Path, encoding: str | None = None, errors: str | None = None) -> str:
+        _ = (self, encoding, errors)
+        raise AssertionError("cleanup manifests must be streamed")
+
+    monkeypatch.setattr(Path, "read_text", fail_read_text)
+
+    assert validate_cleanup_manifest(path) == summary
+    assert list(iter_cleanup_records(path)) == records
+
+
+@pytest.mark.unit()
 def test_cleanup_record_from_entry_maps_source_coordinates() -> None:
     listed = _listed("data/fae/2026/04/13/2026-04-13T07-00-00.xml", 1, "v9")
     entry = ManifestEntry(

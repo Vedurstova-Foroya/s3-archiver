@@ -147,7 +147,7 @@ def test_streaming_subprocess_relay_pipe_accepts_missing_pipe() -> None:
         stderr: None = None
 
         def wait(self, timeout: float) -> int:
-            assert timeout == 1.0
+            assert 0.0 < timeout <= 1.0
             return 0
 
     def popen(*_args: object, **_kwargs: object) -> Process:

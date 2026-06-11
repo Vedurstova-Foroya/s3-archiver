@@ -57,7 +57,9 @@ class ArchiveBucket(Protocol):
         """Return object properties."""
         ...
 
-    def delete_source_object(self, key: str, version_id: str | None = None) -> None:
+    def delete_source_object(
+        self, key: str, version_id: str | None = None, *, if_match: str | None = None
+    ) -> None:
         """Delete one source object, optionally a specific version."""
         ...
 

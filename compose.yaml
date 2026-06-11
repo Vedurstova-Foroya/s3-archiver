@@ -46,6 +46,7 @@ services:
     labels:
       s3-archiver.env.ARCHIVER_CONFIG_JSON: env_file
     restart: unless-stopped
+    stop_grace_period: ${ARCHIVER_SCHEDULER_STOP_GRACE_PERIOD:-2m}
     volumes:
       - app_logs:/var/log/s3-archiver
       - *archiver-temp-volume

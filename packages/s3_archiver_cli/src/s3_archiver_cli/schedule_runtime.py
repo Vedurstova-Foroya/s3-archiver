@@ -11,6 +11,7 @@ import logging
 import signal
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from threading import Event
 from types import FrameType
 
 from s3_archiver_core.errors import S3ArchiverError
@@ -25,14 +26,26 @@ class ShutdownFlag:
 
     requested: bool = False
     signal_name: str = field(default="")
+    event: Event = field(default_factory=Event)
+
+    def request(self, signum: int) -> None:
+        """Record a shutdown signal and wake interruptible waits."""
+
+        self.requested = True
+        self.signal_name = signal.Signals(signum).name
+        self.event.set()
+
+    def sleep(self, seconds: float) -> None:
+        """Wait for ``seconds`` or until shutdown is requested."""
+
+        _ = self.event.wait(seconds)
 
 
 def install_schedule_signals(flag: ShutdownFlag) -> _SignalHandlerPair:
     """Install SIGTERM and SIGINT handlers that mark ``flag`` for shutdown."""
 
     def handler(signum: int, _frame: FrameType | None) -> None:
-        flag.requested = True
-        flag.signal_name = signal.Signals(signum).name
+        flag.request(signum)
 
     previous_term = signal.signal(signal.SIGTERM, handler)
     previous_int = signal.signal(signal.SIGINT, handler)

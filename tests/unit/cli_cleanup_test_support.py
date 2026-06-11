@@ -69,6 +69,11 @@ class DeletingClient(FakeArchiveClient):
         self.deletes.append(kwargs)
         return {}
 
+    @override
+    def delete_objects(self, **kwargs: object) -> dict[str, object]:
+        self.deletes.append(kwargs)
+        return {}
+
 
 def make_settings(tmp_path: Path, base_env: dict[str, str], *, cleanup: bool) -> AppSettings:
     env = {**base_env, "LOG_DIR": str(tmp_path / "logs")}
@@ -152,7 +157,9 @@ def build_opaque(_location: object) -> object:
 
 
 def build_present(_location: object) -> object:
-    return FakeArchiveClient()
+    client = FakeArchiveClient()
+    client.delete_objects_error = client_error("NotImplemented", 501)
+    return client
 
 
 def ok_payload(

@@ -15,6 +15,9 @@ class FakeArchiveClient:
         self.list_v2_calls: list[dict[str, object]] = []
         self.version_calls: list[dict[str, object]] = []
         self.delete_calls: list[dict[str, object]] = []
+        self.delete_objects_calls: list[dict[str, object]] = []
+        self.delete_objects_response: Mapping[str, object] = {}
+        self.delete_objects_error: ClientError | None = None
         self.copy_call: dict[str, object] = {}
         self.create_calls: list[dict[str, object]] = []
         self.upload_part_copy_calls: list[dict[str, object]] = []
@@ -115,6 +118,11 @@ class FakeArchiveClient:
 
     def delete_object(self, **kwargs: object) -> Mapping[str, object]:
         return self._record(self.delete_calls, kwargs, {})
+
+    def delete_objects(self, **kwargs: object) -> Mapping[str, object]:
+        if self.delete_objects_error is not None:
+            raise self.delete_objects_error
+        return self._record(self.delete_objects_calls, kwargs, self.delete_objects_response)
 
     def head_bucket(self, *, Bucket: str) -> object:  # noqa: N803
         _ = Bucket

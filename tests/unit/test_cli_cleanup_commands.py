@@ -79,7 +79,15 @@ def test_run_cleanup_drains_pending_and_releases_lock(
     payload = cleanup_commands.run_cleanup_once(settings, Path("/tmp/log"), None)
 
     assert payload["status"] == "ok"
-    assert deletes == [{"Bucket": "archive-bucket", "Key": "data/a.xml", "VersionId": "v1"}]
+    assert deletes == [
+        {
+            "Bucket": "archive-bucket",
+            "Delete": {
+                "Objects": [{"Key": "data/a.xml", "VersionId": "v1"}],
+                "Quiet": True,
+            },
+        }
+    ]
     assert not (settings.cleanup_pending_dir / "run-1.jsonl").exists()
 
 

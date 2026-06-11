@@ -50,9 +50,12 @@ def test_parse_duration_accepts_hours() -> None:
 
 
 @pytest.mark.unit()
-def test_file_lock_records_process_metadata(tmp_path: Path) -> None:
+def test_file_lock_records_process_metadata(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     lock_path = tmp_path / "archive.lock"
     started = datetime(2024, 4, 20, tzinfo=UTC)
+    monkeypatch.setenv("S3_ARCHIVER_LOCK_OWNER", "scheduler")
 
     assert FileArchiveRunLock(lock_path).acquire(
         run_id="current",
@@ -63,6 +66,7 @@ def test_file_lock_records_process_metadata(tmp_path: Path) -> None:
     payload = _read_lock(lock_path)
     assert payload["pid"] == os.getpid()
     assert payload["hostname"] == socket.gethostname()
+    assert payload["owner"] == "scheduler"
 
 
 @pytest.mark.unit()

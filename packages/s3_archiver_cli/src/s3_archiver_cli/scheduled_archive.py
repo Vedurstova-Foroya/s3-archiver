@@ -10,17 +10,19 @@ import time
 from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from threading import Event
 from typing import Protocol
 from uuid import uuid4
 
 import typer
 from s3_archiver_core.archive_lock import FileArchiveRunLock, LockRecoveryLogger
+from s3_archiver_core.errors import ArchiveRunError
 from s3_archiver_core.payload_utils import JsonValue
-from s3_archiver_core.route_payloads import route_summary_payload
 from s3_archiver_core.settings import AppSettings
 
 from s3_archiver_cli import archive_run_records as _run_records
 from s3_archiver_cli.error_logging import log_error_payload as _log_error_payload
+from s3_archiver_cli.scheduled_archive_payloads import timeout_payload as _timeout_payload
 from s3_archiver_cli.streaming_subprocess import run_streaming_command as _run_streaming_command
 
 type RunCommand = Callable[..., subprocess.CompletedProcess[str]]
@@ -28,12 +30,7 @@ type Echo = Callable[[str], None]
 
 
 class Logger(Protocol):
-    """Minimal logger protocol for scheduler wait reporting.
-
-    PEP 544 structural type — the ``...`` body is an interface stub, not an
-    abstract method. ``logging.Logger`` and any matching test double satisfy
-    it by shape, not by subclassing.
-    """
+    """Minimal logger protocol for scheduler wait reporting."""
 
     def info(self, msg: object, *args: object, extra: Mapping[str, object] | None = None) -> object:
         """Record one structured info event."""
@@ -73,11 +70,7 @@ def sleep_until_next_daily_tick(
     sleep: Callable[[float], None] = time.sleep,
     extra_delay_seconds: float = 0.0,
 ) -> None:
-    """Sleep until the next UTC daily schedule tick.
-
-    ``extra_delay_seconds`` adds an additional backoff sleep before the
-    scheduled wait, used by the scheduler after consecutive failures.
-    """
+    """Sleep until the next UTC daily schedule tick, plus optional backoff."""
 
     if extra_delay_seconds > 0.0:
         _ = logger.info(
@@ -115,6 +108,7 @@ def run_archive_subprocess(
     stderr_echo: Echo | None = None,
     log_error: Callable[[Mapping[str, JsonValue]], None] = _log_error_payload,
     now: Callable[[], datetime] | None = None,
+    shutdown_event: Event | None = None,
 ) -> int:
     """Run one archive child process and relay its output."""
 
@@ -122,6 +116,8 @@ def run_archive_subprocess(
     emit_stderr = _stderr_echo if stderr_echo is None else stderr_echo
     clock = _utc_now if now is None else now
     process_command = list(command or archive_child_command())
+    child_env = dict(os.environ)
+    child_env["S3_ARCHIVER_LOCK_OWNER"] = "scheduler"
     if run_command is subprocess.run:
         try:
             return _run_streaming_command(
@@ -129,6 +125,8 @@ def run_archive_subprocess(
                 settings,
                 emit_stdout,
                 emit_stderr,
+                extra_env={"S3_ARCHIVER_LOCK_OWNER": "scheduler"},
+                shutdown_event=shutdown_event,
             )
         except subprocess.TimeoutExpired as exc:
             _handle_subprocess_timeout(
@@ -145,7 +143,7 @@ def run_archive_subprocess(
     try:
         result = run_command(
             process_command,
-            env=dict(os.environ),
+            env=child_env,
             check=False,
             capture_output=True,
             text=True,
@@ -179,12 +177,21 @@ def run_scheduled_archive(
     stderr_echo: Echo | None = None,
     log_error: Callable[[Mapping[str, JsonValue]], None] = _log_error_payload,
     now: Callable[[], datetime] | None = None,
+    shutdown_event: Event | None = None,
 ) -> None:
     """Run one scheduled archive child process and relay its output."""
 
     if not reconcile_archive_lock(settings, recovery_logger=recovery_logger, now=now):
         return
-    _ = run_archive_subprocess(
+    child_timed_out = False
+
+    def record_child_error(payload: Mapping[str, JsonValue]) -> None:
+        nonlocal child_timed_out
+        if payload.get("reason") == "archive_run_timeout":
+            child_timed_out = True
+        log_error(payload)
+
+    returncode = run_archive_subprocess(
         settings,
         log_file,
         recovery_logger=recovery_logger,
@@ -192,25 +199,14 @@ def run_scheduled_archive(
         run_command=run_command,
         stdout_echo=stdout_echo,
         stderr_echo=stderr_echo,
-        log_error=log_error,
+        log_error=record_child_error,
         now=now,
+        shutdown_event=shutdown_event,
     )
-
-
-def _timeout_payload(settings: AppSettings, log_file: Path) -> dict[str, JsonValue]:
-    return {
-        "status": "error",
-        "phase": "archive.run",
-        "field": "ARCHIVER_RUN_TIMEOUT",
-        "message": "archive run timed out",
-        "details": "archive run timed out",
-        **route_summary_payload(settings),
-        "key": None,
-        "mismatch": None,
-        "reason": "archive_run_timeout",
-        "timed_out": True,
-        "log_file": str(log_file),
-    }
+    if returncode != 0 and (shutdown_event is None or not shutdown_event.is_set()):
+        if child_timed_out:
+            raise ArchiveRunError("archive run timed out")
+        raise ArchiveRunError(f"scheduled archive child exited with code {returncode}")
 
 
 def _handle_subprocess_timeout(
@@ -243,17 +239,28 @@ def reconcile_archive_lock(
     *,
     recovery_logger: LockRecoveryLogger | None = None,
     now: Callable[[], datetime] | None = None,
+    recover_unknown_host: bool = False,
 ) -> bool:
     """Attempt stale-lock reconciliation without taking ownership of an active run."""
 
     clock = _utc_now if now is None else now
     run_lock = FileArchiveRunLock(settings.archive_lock_path, recovery_logger=recovery_logger)
     recovery_run_id = uuid4().hex
-    if run_lock.acquire(
-        run_id=recovery_run_id,
-        run_started_at_utc=clock(),
-        timeout=settings.run_timeout,
-    ):
+    acquired = (
+        run_lock.acquire(
+            run_id=recovery_run_id,
+            run_started_at_utc=clock(),
+            timeout=settings.run_timeout,
+            recover_unknown_host=True,
+        )
+        if recover_unknown_host
+        else run_lock.acquire(
+            run_id=recovery_run_id,
+            run_started_at_utc=clock(),
+            timeout=settings.run_timeout,
+        )
+    )
+    if acquired:
         run_lock.release(run_id=recovery_run_id)
         return True
     return False

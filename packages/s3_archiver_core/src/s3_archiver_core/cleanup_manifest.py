@@ -127,13 +127,11 @@ def iter_cleanup_records(path: Path) -> Iterator[CleanupRecord]:
 
 def _manifest_lines(path: Path) -> Iterator[str]:
     try:
-        text = path.read_text(encoding="utf-8")
+        with path.open("r", encoding="utf-8") as handle:
+            for line in handle:
+                yield line.removesuffix("\n")
     except FileNotFoundError:
         return
-    lines = text.split("\n")
-    if lines and lines[-1] == "":
-        del lines[-1]
-    yield from lines
 
 
 def _decode_line(path: Path, line: str) -> Mapping[str, object]:
