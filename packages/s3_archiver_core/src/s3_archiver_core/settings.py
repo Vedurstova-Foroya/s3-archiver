@@ -39,12 +39,27 @@ class AppSettings:
     log_level: str
     log_dir: Path
     routes: tuple[RouteSettings, ...]
+    cleanup_enabled: bool = False
+    whitelist_enabled: bool = False
+    bucket_whitelist: tuple[str, ...] = ()
 
     @property
     def archive_lock_path(self) -> Path:
         """Return the path to the archive run lock file."""
 
         return self.log_dir / "archive.lock"
+
+    @property
+    def cleanup_pending_dir(self) -> Path:
+        """Return the directory holding cleanup-input manifests awaiting cleanup."""
+
+        return self.log_dir / "cleanup" / "pending"
+
+    @property
+    def cleanup_cleaned_dir(self) -> Path:
+        """Return the directory holding the temporary cleaned-object manifests."""
+
+        return self.log_dir / "cleanup" / "cleaned"
 
     @classmethod
     def from_env(cls, env: Mapping[str, str]) -> AppSettings:

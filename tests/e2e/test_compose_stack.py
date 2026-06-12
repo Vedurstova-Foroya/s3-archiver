@@ -232,6 +232,7 @@ def test_compose_scheduler_service_runs_schedule_command(
     assert "command:" in result.stdout
     assert "- schedule" in result.stdout
     assert "restart: unless-stopped" in result.stdout
+    assert "stop_grace_period:" in result.stdout
     assert "ARCHIVER_CONFIG_JSON:" in result.stdout
 
 

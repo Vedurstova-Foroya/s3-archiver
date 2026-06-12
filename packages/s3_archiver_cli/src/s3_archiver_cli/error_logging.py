@@ -14,6 +14,8 @@ from s3_archiver_core.archive_payloads import (
 )
 from s3_archiver_core.errors import (
     ArchiveRunError,
+    CleanupError,
+    CleanupManifestError,
     ConfigError,
     HealthCheckError,
     LoggingError,
@@ -139,22 +141,27 @@ def error_payload(
 ) -> dict[str, JsonValue]:
     """Build a structured CLI error payload for startup or runtime failures."""
 
+    timed_out = _archive_error_timed_out(error)
     phase = (
         "startup.env_validation"
         if isinstance(error, ConfigError)
         else "archive.run"
         if isinstance(error, ArchiveRunError)
+        else "cleanup.run"
+        if isinstance(error, (CleanupError, CleanupManifestError))
         else "startup.preflight"
     )
     return {
         "status": "error",
         "phase": phase,
-        "field": _error_field(error),
+        "field": "ARCHIVER_RUN_TIMEOUT" if timed_out else _error_field(error),
         "message": str(error),
         "details": str(error),
         **route_summary_payload(settings),
         "key": None,
         "mismatch": None,
+        "reason": "archive_run_timeout" if timed_out else None,
+        "timed_out": timed_out,
     }
 
 
@@ -204,6 +211,10 @@ def _error_field(error: S3ArchiverError) -> str | None:
     if isinstance(error, HealthCheckError):
         return _preflight_field_from_health_error(str(error))
     return None
+
+
+def _archive_error_timed_out(error: S3ArchiverError) -> bool:
+    return isinstance(error, ArchiveRunError) and str(error) == "archive run timed out"
 
 
 def _field_from_error_message(message: str) -> str | None:

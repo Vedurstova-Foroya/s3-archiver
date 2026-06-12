@@ -11,6 +11,7 @@ from s3_archiver_core._archive_copy_routes import (
     direct_entries_for_route,
     direct_entry_count,
 )
+from s3_archiver_core._archive_identity import stable_identity_value
 from s3_archiver_core._archive_manifest_models import ArchiveGroup, ArchiveManifest, ManifestEntry
 from s3_archiver_core._archive_object_activity import (
     entry_activity_watchdog,
@@ -34,8 +35,10 @@ from s3_archiver_core.archive_routes import ArchiveRoute, DebugLogger
 from s3_archiver_core.archive_tar import sha256_file, write_tar_gz_archive
 from s3_archiver_core.archive_transfer import (
     archive_metadata,
+    fingerprint_from_metadata,
     select_transfer_strategy,
 )
+from s3_archiver_core.s3 import S3ObjectProperties
 from s3_archiver_core.temp_files import TRANSFER_TEMP_PREFIX, ensure_temp_storage_available
 
 type GroupIdentity = tuple[object | None, str, str]
@@ -119,7 +122,9 @@ def copy_direct_entry(
             verified = verify_direct_entry(route, hydrated, existing)
             if verified.ok:
                 return None, True
-            return f"{destination_key}: {verified.detail}", False
+            if not _direct_destination_refreshable(hydrated, existing):
+                detail = f"{verified.detail}; remove conflicting destination"
+                return f"{destination_key}: {detail}", False
         strategy = select_transfer_strategy(entry.size, route.transfer_capabilities)
         if debug_logger is not None:
             debug_logger(hydrated, strategy)
@@ -256,6 +261,16 @@ def _entry_with_current_source_properties(
         raise FileNotFoundError(f"{entry.key}: listed source object disappeared before copy")
     listed = replace(entry.object, properties=properties)
     return replace(entry, object=listed)
+
+
+def _direct_destination_refreshable(entry: ManifestEntry, existing: S3ObjectProperties) -> bool:
+    fingerprint = fingerprint_from_metadata(existing.metadata)
+    return (
+        fingerprint is not None
+        and fingerprint.source_bucket == entry.source_bucket
+        and fingerprint.source_identity == stable_identity_value(entry.source_identity)
+        and fingerprint.source_key == entry.key
+    )
 
 
 def _advance_group_progress(group: ArchiveGroup, progress_logger: ProgressAdvance | None) -> None:

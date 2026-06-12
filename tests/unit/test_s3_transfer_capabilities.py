@@ -41,8 +41,8 @@ def test_transfer_capabilities_honor_provider_profile_registry(
         s3_module,
         "_TRANSFER_PROFILES",
         {
-            "localstack": s3_module.S3ProviderTransferProfile(native_copy=False),
-            "oci": s3_module.S3ProviderTransferProfile(),
+            "localstack": s3_module.S3TransferCapabilities(native_copy=False),
+            "oci": s3_module.S3TransferCapabilities(),
         },
     )
 

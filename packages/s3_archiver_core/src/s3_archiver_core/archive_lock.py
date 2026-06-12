@@ -5,12 +5,18 @@ from __future__ import annotations
 import json
 import os
 import socket
-from collections.abc import Callable, Mapping
+import tempfile
+from collections.abc import Callable, Iterator, Mapping
+from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
+from fcntl import LOCK_EX, LOCK_UN, flock
 from pathlib import Path
 from typing import cast
+from uuid import uuid4
 
 LockRecoveryLogger = Callable[[str, Mapping[str, object]], None]
+LOCK_OWNER_ENV = "S3_ARCHIVER_LOCK_OWNER"
+SCHEDULER_LOCK_OWNER = "scheduler"
 
 
 class FileArchiveRunLock:
@@ -23,63 +29,139 @@ class FileArchiveRunLock:
         self._path = path
         self._recovery_logger = recovery_logger
 
-    def acquire(self, *, run_id: str, run_started_at_utc: datetime, timeout: timedelta) -> bool:
+    def acquire(
+        self,
+        *,
+        run_id: str,
+        run_started_at_utc: datetime,
+        timeout: timedelta,
+        recover_unknown_host: bool = False,
+    ) -> bool:
         """Acquire the file lock unless a non-stale run owns it."""
 
         self._path.parent.mkdir(parents=True, exist_ok=True)
-        payload = json.dumps(
-            {
-                "hostname": socket.gethostname(),
-                "pid": os.getpid(),
-                "run_id": run_id,
-                "run_started_at_utc": run_started_at_utc.isoformat(),
-            },
-            sort_keys=True,
-        )
-        for _attempt in range(2):
-            try:
-                descriptor = os.open(
-                    self._path,
-                    os.O_CREAT | os.O_EXCL | os.O_WRONLY,
-                    0o600,
-                )
-            except FileExistsError:
-                if not self._existing_lock_is_stale(timeout):
+        payload = _lock_payload(run_id, run_started_at_utc)
+        with _exclusive_lock_guard(self._path):
+            for _attempt in range(2):
+                if _install_lock_payload(self._path, payload):
+                    return True
+                if not self._take_over_existing_lock(timeout, recover_unknown_host):
                     return False
-                continue
-            with os.fdopen(descriptor, "w", encoding="utf-8") as lock_file:
-                _ = lock_file.write(payload)
-            return True
-        return False
+            return False
 
     def release(self, *, run_id: str) -> None:
         """Release the lock only when the expected run owns it."""
 
-        if not self._path.exists():
-            return
-        if _lock_run_id(self._path) == run_id:
-            _safe_unlink(self._path)
+        with _exclusive_lock_guard(self._path):
+            if not self._path.exists():
+                return
+            if _lock_run_id(self._path) == run_id:
+                _ = _dispose_lock_path(self._path, "released")
 
-    def _existing_lock_is_stale(self, timeout: timedelta) -> bool:
+    def _take_over_existing_lock(self, timeout: timedelta, recover_unknown_host: bool) -> bool:
         decoded = _lock_json(self._path)
-        started = _lock_started_at(decoded)
-        if started is None:
-            self._log_recovery("invalid_lock_metadata", decoded)
-            _safe_unlink(self._path)
-            return True
-        timed_out = datetime.now(tz=UTC) - started > timeout
-        if not timed_out and _lock_process_is_alive_on_this_host(decoded):
+        reason = _stale_lock_reason(decoded, timeout, recover_unknown_host)
+        if reason is None:
             return False
-        if not timed_out and not _lock_process_is_dead_on_this_host(decoded):
+        if not _dispose_lock_path(self._path, "stale"):
             return False
-        reason = "stale_lock_timed_out" if timed_out else "stale_lock_abandoned"
         self._log_recovery(reason, decoded)
-        _safe_unlink(self._path)
         return True
 
     def _log_recovery(self, reason: str, payload: Mapping[str, object]) -> None:
         if self._recovery_logger is not None:
             self._recovery_logger(reason, payload)
+
+
+def _lock_payload(run_id: str, run_started_at_utc: datetime) -> str:
+    payload_fields: dict[str, object] = {
+        "hostname": socket.gethostname(),
+        "pid": os.getpid(),
+        "run_id": run_id,
+        "run_started_at_utc": run_started_at_utc.isoformat(),
+    }
+    if owner := os.environ.get(LOCK_OWNER_ENV):
+        payload_fields["owner"] = owner
+    return json.dumps(payload_fields, sort_keys=True)
+
+
+def _stale_lock_reason(
+    decoded: Mapping[str, object], timeout: timedelta, recover_unknown_host: bool
+) -> str | None:
+    started = _lock_started_at(decoded)
+    if started is None:
+        return "invalid_lock_metadata"
+    timed_out = datetime.now(tz=UTC) - started > timeout
+    if not timed_out and _lock_process_is_alive_on_this_host(decoded):
+        return None
+    if not timed_out and not _lock_process_is_dead_on_this_host(decoded):
+        if recover_unknown_host and _lock_process_is_on_unknown_host(decoded):
+            return "stale_lock_unknown_host"
+        return None
+    return "stale_lock_timed_out" if timed_out else "stale_lock_abandoned"
+
+
+@contextmanager
+def _exclusive_lock_guard(path: Path) -> Iterator[None]:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor = os.open(_guard_path(path), os.O_CREAT | os.O_RDWR, 0o600)
+    try:
+        flock(descriptor, LOCK_EX)
+        yield
+    finally:
+        flock(descriptor, LOCK_UN)
+        os.close(descriptor)
+
+
+def _install_lock_payload(path: Path, payload: str) -> bool:
+    temp_path = _write_lock_temp(path, payload)
+    try:
+        try:
+            os.link(temp_path, path)
+        except FileExistsError:
+            return False
+        return True
+    finally:
+        _safe_unlink(temp_path)
+
+
+def _write_lock_temp(path: Path, payload: str) -> Path:
+    descriptor, raw_temp_path = tempfile.mkstemp(
+        dir=path.parent,
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+        text=True,
+    )
+    temp_path = Path(raw_temp_path)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as lock_file:
+            _ = lock_file.write(payload)
+            lock_file.flush()
+            os.fsync(lock_file.fileno())
+    except Exception:
+        _safe_unlink(temp_path)
+        raise
+    return temp_path
+
+
+def _dispose_lock_path(path: Path, label: str) -> bool:
+    stale_path = _disposable_path(path, label)
+    try:
+        _ = path.rename(stale_path)
+    except FileNotFoundError:
+        return True
+    except OSError:
+        return False
+    _safe_unlink(stale_path)
+    return True
+
+
+def _disposable_path(path: Path, label: str) -> Path:
+    return path.with_name(f"{path.name}.{label}-{uuid4().hex}")
+
+
+def _guard_path(path: Path) -> Path:
+    return path.with_name(f".{path.name}.guard")
 
 
 def parse_duration(value: str) -> timedelta:
@@ -139,6 +221,15 @@ def _lock_process_is_dead_on_this_host(decoded: Mapping[str, object]) -> bool:
         and type(pid) is int
         and pid > 0
         and not _process_is_alive(pid)
+    )
+
+
+def _lock_process_is_on_unknown_host(decoded: Mapping[str, object]) -> bool:
+    hostname = decoded.get("hostname")
+    return (
+        isinstance(hostname, str)
+        and hostname != socket.gethostname()
+        and decoded.get("owner") == SCHEDULER_LOCK_OWNER
     )
 
 

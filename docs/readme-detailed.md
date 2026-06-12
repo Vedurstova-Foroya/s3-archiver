@@ -35,7 +35,7 @@ docker compose --profile test down -v
 ```
 
 Running the app container without an explicit command prints CLI help and exits `0`.
-Use `s3-archiver check` for startup validation, `s3-archiver archive` for one archive invocation, and `s3-archiver schedule` for the built-in once-per-day UTC scheduler loop.
+Use `s3-archiver check` for startup validation, `s3-archiver archive` for one archive invocation, `s3-archiver cleanup` to delete archived source objects, and `s3-archiver schedule` for the built-in once-per-day UTC scheduler loop.
 
 The container entrypoint repairs writable runtime mounts, drops to the unprivileged app user, and writes JSON log files to the `app_logs` named volume mounted at `/var/log/s3-archiver` in the container.
 The checked-in env files default `LOG_DIR` to `/var/log/s3-archiver` to match the runtime contract used by the container image and Compose stack.
@@ -78,6 +78,11 @@ Size guardrails:
 
 - `ARCHIVER_MAX_SOURCE_OBJECT_SIZE_MIB` defaults to `102400` MiB. Listed source objects larger than this are skipped before copy.
 - `ARCHIVER_MAX_DESTINATION_ARCHIVE_SIZE_MIB` defaults to `102400` MiB. Archive groups whose estimated staged tar size is larger than this are skipped before local archive creation.
+
+Bucket whitelist:
+
+- `ARCHIVER_BUCKET_WHITELIST_ENABLED` defaults to `false`, leaving the whitelist check off. Set it to `true` to require every source and destination bucket referenced by `ARCHIVER_CONFIG_JSON` to appear in `ARCHIVER_BUCKET_WHITELIST`.
+- `ARCHIVER_BUCKET_WHITELIST` is a JSON array of allowed bucket names, for example `["source-bucket", "archive-bucket"]`. When the check is enabled, startup fails with a `ConfigError` naming the first route, side, and bucket that is not listed. The toggle is independent of the list, so an enabled check with an empty list rejects every bucket and nothing can run.
 
 Parser and copy mode are independent: `parser: direct` means select by S3 `LastModified`, while `copy_mode: direct` means write one destination object per selected source key.
 See `docs/parsers.md` for detailed parser and copy-mode behavior, and
@@ -299,6 +304,51 @@ Daily `tar.gz` archive groups are capped by both source bytes and object count s
 files stay bounded. The defaults are 100 GiB and 2,000,000 source objects; override them with
 `ARCHIVER_ARCHIVE_GROUP_MAX_BYTES` and `ARCHIVER_ARCHIVE_GROUP_MAX_OBJECTS` if a deployment needs
 smaller or larger archive parts.
+
+## Source Cleanup
+
+Cleanup deletes source objects only after they have been safely archived, in two
+auditable steps:
+
+1. **Archive** copies and verifies source objects, then writes a durable
+   *cleanup-input manifest* — one per successful run — to
+   `LOG_DIR/cleanup/pending/<run_id>.jsonl`. A valid manifest is the proof that
+   those source objects landed in the destination, so it doubles as the
+   delete-list. Each manifest carries a `sha256` digest over its records;
+   archive re-validates the manifest it just wrote and hard-fails the run if it
+   is mangled, so an on-disk manifest is always trustworthy.
+2. **Cleanup** consumes the pending manifests, deletes each referenced source
+   object at the exact archived version, re-checks that it is actually gone, and
+   records every verified deletion into a temporary cleaned manifest under
+   `LOG_DIR/cleanup/cleaned/`. When the cleaned manifest matches the input
+   exactly, the input manifest is retired. Partially-cleaned manifests are kept
+   so a later run retries only the remainder (deletion is idempotent).
+
+Run cleanup **manually** at any time; it ignores `CLEANUP` and always cleans up:
+
+```bash
+docker compose run --rm app cleanup                       # drain all pending manifests
+docker compose run --rm app cleanup --manifest <path>     # clean one given manifest
+ENV_FILE=.env ./scripts/run_archive.sh cleanup            # host-native wrapper
+```
+
+Run cleanup **automatically** by setting `CLEANUP=true` (default `false`). Each
+scheduled/automatic archive then chains cleanup in the same process, under the
+same lock, immediately after a successful archive.
+
+- **Mutual exclusion.** Cleanup acquires the same `archive.lock` (in `LOG_DIR`)
+  as archiving, so a cleanup and an archive can never run at the same time; the
+  second caller exits without touching S3. A cleanup child that hangs is killed
+  by the timeout-enforced parent, its stale lock is reconciled, the failure is
+  logged, and the scheduler retries on the next tick.
+- **Empty manifests** (none pending, or a `--manifest` with no objects) are not
+  an error condition for S3: cleanup logs `cleanup.manifest.empty` and exits
+  non-zero for the manual command, while a chained automatic cleanup just logs
+  and leaves the archive result intact.
+- **Corrupt manifests** are never cleaned. A malformed, truncated, or tampered
+  manifest raises `CleanupManifestError`, deletes nothing, and requires an
+  operator to remove the bad file from `LOG_DIR/cleanup/pending/` and let the
+  next archive regenerate a fresh one.
 
 ## Conventional Commits And Releases
 

@@ -34,6 +34,10 @@ class S3Client(Protocol):
         """Return object data."""
         ...
 
+    def delete_object(self, **kwargs: object) -> Mapping[str, object]:
+        """Delete one object version."""
+        ...
+
     def list_objects_v2(self, **kwargs: object) -> Mapping[str, object]:
         """List unversioned objects."""
         ...
@@ -153,14 +157,9 @@ class S3TransferCapabilities:
     streaming_limit_bytes: int = DEFAULT_STREAMING_LIMIT_BYTES
 
 
-S3ProviderTransferProfile = S3TransferCapabilities
-
-
-_TRANSFER_PROFILES: Mapping[str, S3ProviderTransferProfile] = {
-    "localstack": S3ProviderTransferProfile(),
-    "oci": S3ProviderTransferProfile(),
-    "custom": S3ProviderTransferProfile(),
-}
+_TRANSFER_PROFILES: Mapping[str, S3TransferCapabilities] = dict.fromkeys(
+    ("localstack", "oci", "custom"), S3TransferCapabilities()
+)
 
 
 class S3ClientFactory(Protocol):
@@ -250,7 +249,7 @@ def transfer_capabilities_for_locations(
     )
 
 
-def transfer_profile_for_location(location: S3LocationSettings) -> S3ProviderTransferProfile:
+def transfer_profile_for_location(location: S3LocationSettings) -> S3TransferCapabilities:
     """Return the transfer profile for one configured provider location."""
 
     profile = _TRANSFER_PROFILES.get(location.provider.value)

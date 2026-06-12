@@ -57,6 +57,12 @@ class ArchiveBucket(Protocol):
         """Return object properties."""
         ...
 
+    def delete_source_object(
+        self, key: str, version_id: str | None = None, *, if_match: str | None = None
+    ) -> None:
+        """Delete one source object, optionally a specific version."""
+        ...
+
     def content_sha256(self, key: str, version_id: str | None = None) -> str | None:
         """Return a SHA-256 digest for object content."""
         ...

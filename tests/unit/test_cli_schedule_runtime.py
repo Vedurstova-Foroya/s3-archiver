@@ -15,6 +15,7 @@ import pytest
 import s3_archiver_cli.main as cli_module
 import s3_archiver_cli.scheduled_archive as scheduled_archive_module
 import typer
+from s3_archiver_core.errors import ArchiveRunError
 from s3_archiver_core.settings import AppSettings
 
 
@@ -55,8 +56,10 @@ def test_run_scheduled_archive_relays_child_process_streams(
     stderr_messages: list[str] = []
     commands: list[list[str]] = []
 
-    def fake_run_command(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+    def fake_run_command(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
         commands.append(command)
+        env = cast(dict[str, str], kwargs["env"])
+        assert env["S3_ARCHIVER_LOCK_OWNER"] == "scheduler"
         return subprocess.CompletedProcess(command, 0, stdout='{"status":"ok"}\n', stderr="warn\n")
 
     scheduled_archive_module.run_scheduled_archive(
@@ -180,14 +183,17 @@ def test_run_scheduled_archive_times_out_and_recovers_stale_lock(
 
     monkeypatch.setattr(scheduled_archive_module, "FileArchiveRunLock", RecordingLock)
 
-    scheduled_archive_module.run_scheduled_archive(
-        settings,
-        Path("/tmp/log"),
-        command=["archive"],
-        run_command=fake_run_command,
-        stderr_echo=stderr_messages.append,
-        log_error=lambda payload: logged_payloads.append(cast(dict[str, object], dict(payload))),
-    )
+    with pytest.raises(ArchiveRunError, match="archive run timed out"):
+        scheduled_archive_module.run_scheduled_archive(
+            settings,
+            Path("/tmp/log"),
+            command=["archive"],
+            run_command=fake_run_command,
+            stderr_echo=stderr_messages.append,
+            log_error=lambda payload: logged_payloads.append(
+                cast(dict[str, object], dict(payload))
+            ),
+        )
 
     assert len(acquired) == 2
     assert released == acquired
@@ -216,15 +222,17 @@ def test_run_scheduled_archive_timeout_skips_release_when_recovery_lock_is_unava
 ) -> None:
     monkeypatch.setattr(os, "environ", base_env)
     settings = AppSettings.from_env(base_env)
+    acquired: list[str] = []
     released: list[str] = []
 
-    class RefusingLock:
+    class RecoveryRefusingLock:
         def __init__(self, path: Path, **_kwargs: object) -> None:
             assert path == Path(base_env["LOG_DIR"]) / "archive.lock"
 
         def acquire(self, *, run_id: str, run_started_at_utc: datetime, timeout: object) -> bool:
-            _ = (run_id, run_started_at_utc, timeout)
-            return False
+            _ = (run_started_at_utc, timeout)
+            acquired.append(run_id)
+            return len(acquired) == 1
 
         def release(self, *, run_id: str) -> None:
             released.append(run_id)
@@ -232,16 +240,18 @@ def test_run_scheduled_archive_timeout_skips_release_when_recovery_lock_is_unava
     def fake_run_command(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
         raise subprocess.TimeoutExpired(command, timeout=1, output=None, stderr=None)
 
-    monkeypatch.setattr(scheduled_archive_module, "FileArchiveRunLock", RefusingLock)
+    monkeypatch.setattr(scheduled_archive_module, "FileArchiveRunLock", RecoveryRefusingLock)
 
-    scheduled_archive_module.run_scheduled_archive(
-        settings,
-        Path("/tmp/log"),
-        command=["archive"],
-        run_command=fake_run_command,
-    )
+    with pytest.raises(ArchiveRunError, match="archive run timed out"):
+        scheduled_archive_module.run_scheduled_archive(
+            settings,
+            Path("/tmp/log"),
+            command=["archive"],
+            run_command=fake_run_command,
+        )
 
-    assert released == []
+    assert len(acquired) == 2
+    assert released == [acquired[0]]
 
 
 @pytest.mark.unit()

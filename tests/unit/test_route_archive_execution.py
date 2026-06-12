@@ -215,5 +215,7 @@ def test_direct_copy_existing_conflicting_destination_fails() -> None:
         clock=lambda: STARTED,
     )
 
-    assert result.copy.failures == ("data/raw.txt: source fingerprint mismatch",)
+    assert result.copy.failures == (
+        "data/raw.txt: source fingerprint mismatch; remove conflicting destination",
+    )
     assert result.verify.skipped is True

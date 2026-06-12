@@ -30,24 +30,42 @@ def test_file_lock_release_ignores_missing_lock(tmp_path: Path) -> None:
 
 
 @pytest.mark.unit()
-def test_file_lock_returns_false_when_stale_lock_is_replaced_by_competing_writer(
+def test_file_lock_returns_false_when_lock_install_collides_with_competing_writer(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     lock_path = tmp_path / "archive.lock"
     _ = lock_path.write_text("{", encoding="utf-8")
+    real_link = os.link
 
-    def already_exists(
+    def competing_writer(
         path: str | bytes | os.PathLike[str] | os.PathLike[bytes],
-        flags: int,
-        mode: int = 0o777,
+        target: str | bytes | os.PathLike[str] | os.PathLike[bytes],
         *,
-        dir_fd: int | None = None,
-    ) -> int:
-        _ = (path, flags, mode, dir_fd)
+        src_dir_fd: int | None = None,
+        dst_dir_fd: int | None = None,
+        follow_symlinks: bool = True,
+    ) -> None:
+        if Path(os.fsdecode(target)) != lock_path:
+            return real_link(
+                path,
+                target,
+                src_dir_fd=src_dir_fd,
+                dst_dir_fd=dst_dir_fd,
+                follow_symlinks=follow_symlinks,
+            )
+        write_lock(
+            lock_path,
+            {
+                "hostname": socket.gethostname(),
+                "pid": os.getpid(),
+                "run_id": "competing",
+                "run_started_at_utc": datetime.now(tz=UTC).isoformat(),
+            },
+        )
         raise FileExistsError
 
-    monkeypatch.setattr(os, "open", already_exists)
+    monkeypatch.setattr(os, "link", competing_writer)
 
     acquired = FileArchiveRunLock(lock_path).acquire(
         run_id="next",
@@ -59,7 +77,7 @@ def test_file_lock_returns_false_when_stale_lock_is_replaced_by_competing_writer
 
 
 @pytest.mark.unit()
-def test_file_lock_keeps_active_lock_from_other_host(tmp_path: Path) -> None:
+def test_file_lock_keeps_active_non_scheduler_lock_from_other_host(tmp_path: Path) -> None:
     lock_path = tmp_path / "archive.lock"
     payload = {
         "hostname": "other-host",
@@ -80,11 +98,40 @@ def test_file_lock_keeps_active_lock_from_other_host(tmp_path: Path) -> None:
         run_id="next",
         run_started_at_utc=datetime.now(tz=UTC),
         timeout=timedelta(days=7),
+        recover_unknown_host=True,
     )
 
     assert acquired is False
     assert read_lock(lock_path)["run_id"] == "active"
     assert recoveries == []
+
+
+@pytest.mark.unit()
+def test_file_lock_recovers_unknown_host_when_enabled(tmp_path: Path) -> None:
+    lock_path = tmp_path / "archive.lock"
+    payload = {
+        "hostname": "prior-container-host",
+        "owner": "scheduler",
+        "pid": 123,
+        "run_id": "active",
+        "run_started_at_utc": datetime.now(tz=UTC).isoformat(),
+    }
+    write_lock(lock_path, payload)
+    recoveries: list[tuple[str, Mapping[str, object]]] = []
+
+    acquired = FileArchiveRunLock(
+        lock_path,
+        recovery_logger=lambda reason, logged_payload: recoveries.append((reason, logged_payload)),
+    ).acquire(
+        run_id="next",
+        run_started_at_utc=datetime.now(tz=UTC),
+        timeout=timedelta(days=7),
+        recover_unknown_host=True,
+    )
+
+    assert acquired is True
+    assert read_lock(lock_path)["run_id"] == "next"
+    assert recoveries == [("stale_lock_unknown_host", payload)]
 
 
 @pytest.mark.unit()

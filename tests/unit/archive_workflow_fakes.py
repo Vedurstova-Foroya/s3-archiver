@@ -118,7 +118,11 @@ class FakeBucket:
     copied: list[str]
     copy_strategies: list[TransferStrategy]
     uploaded: list[str]
+    deleted: list[tuple[str, str | None]]
+    delete_conditions: list[str | None]
     fail_copy: bool
+    fail_delete: bool
+    skip_actual_delete: bool
     _objects: dict[str, S3ListedObject]
     _versions: dict[tuple[str, str | None], S3ListedObject]
     _destination: dict[str, S3ObjectProperties]
@@ -144,7 +148,11 @@ class FakeBucket:
         self.copied = []
         self.copy_strategies = []
         self.uploaded = []
+        self.deleted = []
+        self.delete_conditions = []
         self.fail_copy = False
+        self.fail_delete = False
+        self.skip_actual_delete = False
         self._objects = {item.key: item for item in objects}
         self._versions = {(item.key, item.version_id): item for item in chain(objects, versions)}
         self._destination = dict(destination or {})
@@ -181,6 +189,23 @@ class FakeBucket:
         if (source := self._objects.get(key)) is not None:
             return source.properties
         return None
+
+    def delete_source_object(
+        self, key: str, version_id: str | None = None, *, if_match: str | None = None
+    ) -> None:
+        self.deleted.append((key, version_id))
+        self.delete_conditions.append(if_match)
+        if self.fail_delete:
+            raise RuntimeError("delete failed")
+        if if_match is not None:
+            current = self.head_object(key, version_id)
+            if current is None or current.etag != if_match:
+                raise RuntimeError("delete precondition failed")
+        if self.skip_actual_delete:
+            return
+        _ = self._objects.pop(key, None)
+        _ = self._versions.pop((key, version_id), None)
+        _ = self._destination.pop(key, None)
 
     def content_sha256(self, key: str, version_id: str | None = None) -> str | None:
         self.content_sha256_calls.append((key, version_id))

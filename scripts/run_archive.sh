@@ -14,7 +14,7 @@ if [[ ! -f "${env_file}" ]]; then
   exit 1
 fi
 
-if [[ "${command}" != "archive" && "${command}" != "schedule" ]]; then
+if [[ "${command}" != "archive" && "${command}" != "schedule" && "${command}" != "cleanup" ]]; then
   echo "unsupported s3-archiver command: ${command}" >&2
   exit 1
 fi

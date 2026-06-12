@@ -18,9 +18,13 @@ keep it elsewhere.
 
 ```bash
 docker compose run --rm app check     # validate config + S3
-docker compose run --rm app archive   # one archive pass
+docker compose run --rm app archive   # one archive pass (writes a cleanup manifest)
+docker compose run --rm app cleanup   # delete the archived source objects
 docker compose logs -f scheduler                  # tail the loop
 ```
+
+Set `CLEANUP=true` to delete archived source objects automatically after each
+scheduled archive run; the manual `cleanup` command always cleans up regardless.
 
 Logs persist to the `app_logs` named volume at `/var/log/s3-archiver`.
 

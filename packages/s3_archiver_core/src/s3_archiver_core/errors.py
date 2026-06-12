@@ -19,3 +19,11 @@ class HealthCheckError(S3ArchiverError):
 
 class ArchiveRunError(S3ArchiverError):
     """Raised when an archive run completes with failed phases."""
+
+
+class CleanupError(S3ArchiverError):
+    """Raised when a cleanup run fails to delete and verify every object."""
+
+
+class CleanupManifestError(S3ArchiverError):
+    """Raised when a cleanup manifest is malformed, corrupted, or mangled."""

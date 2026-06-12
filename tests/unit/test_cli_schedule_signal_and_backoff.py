@@ -69,7 +69,8 @@ def test_schedule_command_exits_cleanly_on_sigterm_during_sleep(
     info_events: list[tuple[str, dict[str, object]]] = []
     _capture_info_events(monkeypatch, info_events)
 
-    def reconcile_lock(_settings: AppSettings, **_kwargs: object) -> bool:
+    def reconcile_lock(_settings: AppSettings, **kwargs: object) -> bool:
+        assert kwargs["recover_unknown_host"] is True
         return True
 
     sleeps = 0
