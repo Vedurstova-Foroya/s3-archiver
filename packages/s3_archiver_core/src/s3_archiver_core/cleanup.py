@@ -160,6 +160,12 @@ def _route_for_record(
         return None, f"{record.key}: no configured route named {record.route_name!r}"
     if stable_identity_value(route.source_identity) != record.source_identity:
         return None, f"{record.key}: source identity mismatch for route {record.route_name!r}"
+    if route.source.bucket != record.source_bucket:
+        message = (
+            f"{record.key}: source bucket mismatch for route {record.route_name!r}"
+            + f" (manifest {record.source_bucket!r}, route {route.source.bucket!r})"
+        )
+        return None, message
     return route, None
 
 

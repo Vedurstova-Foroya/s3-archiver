@@ -160,6 +160,23 @@ def test_source_identity_mismatch_is_failure(tmp_path: Path) -> None:
 
 
 @pytest.mark.unit()
+def test_source_bucket_mismatch_is_failure(tmp_path: Path) -> None:
+    source = FakeBucket("renamed-source", (_listed("data/a.xml", 1, "v1"),))
+    manifest = _manifest(tmp_path / "run-1.jsonl", [_record("data/a.xml", "v1")])
+
+    result = run_cleanup(
+        _routes(source), manifests=[manifest], cleaned_dir=tmp_path / "cleaned", timed_out=_never
+    )
+
+    assert result.ok is False
+    assert result.failures == (
+        "data/a.xml: source bucket mismatch for route 'default' "
+        + "(manifest 'source', route 'renamed-source')",
+    )
+    assert source.deleted == []
+
+
+@pytest.mark.unit()
 def test_drains_every_pending_manifest(tmp_path: Path) -> None:
     source = FakeBucket("source", (_listed("data/a.xml", 1, "v1"), _listed("data/b.xml", 1, "v2")))
     first = _manifest(tmp_path / "run-1.jsonl", [_record("data/a.xml", "v1")], run_id="run-1")

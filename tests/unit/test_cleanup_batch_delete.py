@@ -77,12 +77,16 @@ class BatchDeleteBucket(FakeBucket):
 
 
 def _record(
-    key: str, version_id: str | None = "v1", *, route_name: str = "default"
+    key: str,
+    version_id: str | None = "v1",
+    *,
+    route_name: str = "default",
+    source_bucket: str = "source",
 ) -> CleanupRecord:
     return CleanupRecord(
         route_name=route_name,
         source_identity=None,
-        source_bucket="source",
+        source_bucket=source_bucket,
         key=key,
         version_id=version_id,
         size=10,
@@ -188,7 +192,10 @@ def test_cleanup_flushes_batch_when_route_changes(tmp_path: Path) -> None:
     source_b = BatchDeleteBucket("source-b", (_listed("data/b.xml", 1, "v2"),))
     manifest = _manifest(
         tmp_path / "run-1.jsonl",
-        [_record("data/a.xml", "v1", route_name="a"), _record("data/b.xml", "v2", route_name="b")],
+        [
+            _record("data/a.xml", "v1", route_name="a", source_bucket="source-a"),
+            _record("data/b.xml", "v2", route_name="b", source_bucket="source-b"),
+        ],
     )
 
     result = run_cleanup(
