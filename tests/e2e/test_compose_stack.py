@@ -52,6 +52,7 @@ def test_compose_app_check_succeeds(
     assert '"event": "health.succeeded"' in result.stdout
     assert '"status": "ok"' in final_line
     assert f'"source_bucket": "{bucket_pair_from_env(compose_env).source}"' in final_line
+    assert result.stderr.strip().splitlines()[-1] == "check success"
 
 
 @pytest.mark.e2e()

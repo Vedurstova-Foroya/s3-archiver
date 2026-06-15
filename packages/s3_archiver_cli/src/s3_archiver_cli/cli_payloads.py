@@ -10,6 +10,7 @@ import typer
 from s3_archiver_core.archive import ArchiveRunResult
 from s3_archiver_core.archive_manifest import ManifestEntry
 from s3_archiver_core.errors import ConfigError, HealthCheckError, LoggingError, S3ArchiverError
+from s3_archiver_core.health import HealthReport
 from s3_archiver_core.payload_utils import JsonValue
 from s3_archiver_core.route_payloads import working_set_payload
 from s3_archiver_core.settings import AppSettings
@@ -44,6 +45,14 @@ def emit_working_set(settings: AppSettings) -> None:
         "working_set": working_set_payload(settings),
     }
     typer.echo(json.dumps(payload, sort_keys=True), err=True)
+
+
+def emit_check_success(report: HealthReport) -> None:
+    """Emit a readable per-route success summary, ending with ``check success``."""
+
+    for route in report.routes:
+        typer.echo(f"{route.name} ({route.parser}) check success", err=True)
+    typer.echo("check success", err=True)
 
 
 def archive_result_payload(

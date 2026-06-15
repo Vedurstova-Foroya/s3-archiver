@@ -78,6 +78,7 @@ def check() -> None:
 
     payload = report.as_dict()
     typer.echo(json.dumps(payload, sort_keys=True))
+    _cli_payloads.emit_check_success(report)
 
 
 @app.command()
