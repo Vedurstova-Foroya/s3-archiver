@@ -6,7 +6,7 @@ Typed configuration, S3 clients, route manifest building, archive execution, log
 
 `AppSettings.from_env` reads `ARCHIVER_CONFIG_JSON`, a JSON array of route objects. Each route has a unique `name`, a `parser`, a `copy_mode`, a `source` S3 location, and a `destination` S3 location.
 
-Shared S3 connection settings come from environment variables such as `S3_PROVIDER`, `S3_REGION`, `S3_ENDPOINT_URL`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, `S3_ADDRESSING_STYLE`, `S3_NAMESPACE`, and `S3_IAM_USER_OCID`. Buckets are side-specific with `S3_SOURCE_BUCKET` and `S3_DESTINATION_BUCKET`. Route location objects should only carry route-local path information when needed:
+Shared S3 connection settings come from environment variables such as `S3_PROVIDER`, `S3_REGION`, `S3_ENDPOINT_URL`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, `S3_ADDRESSING_STYLE`, `S3_NAMESPACE`, and `S3_IAM_USER_OCID`. Buckets are side-specific with `S3_SOURCE_BUCKET` and `S3_DESTINATION_BUCKET`. An omitted `destination.path` defaults to the resolved `source.path`, so an empty `"destination": {}` archives the source prefix into the destination bucket unchanged; set `destination.path` to `""` to write at the destination root instead. Route location objects should only carry route-local path information when needed:
 
 ```json
 [

@@ -33,7 +33,7 @@ S3_SOURCE_BUCKET=source-bucket
 S3_DESTINATION_BUCKET=archive-bucket
 ```
 
-`ARCHIVER_CONFIG_JSON` route locations only need `path` when a route should be scoped or written below a prefix:
+`ARCHIVER_CONFIG_JSON` route locations only need `path` when a route should be scoped or written below a prefix. An omitted `destination.path` reuses the source path, so `"destination": {}` archives the source prefix into the destination bucket unchanged (the example below sets `destination.path` only because it writes under a different prefix):
 
 ```json
 [

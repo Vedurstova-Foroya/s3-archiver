@@ -57,9 +57,9 @@ LocalStack readiness now only proves the S3 API is reachable. The pytest integra
 - `source`: source S3 location object.
 - `destination`: destination S3 location object.
 
-Source and destination location objects use the same schema: optional `provider`, optional `region`, `bucket`, optional `namespace`, optional `iam_user_ocid`, optional `endpoint_url`, optional `access_key_id`, optional `secret_access_key`, optional `addressing_style`, and optional `path`. `provider` is `oci` or `localstack`; `addressing_style` is `path` or `virtual`. For OCI routes, omit `endpoint_url` to derive `https://<namespace>.compat.objectstorage.<region>.oraclecloud.com`. `path` scopes the route to a prefix on that side and may be empty.
+Source and destination location objects use the same schema: optional `provider`, optional `region`, `bucket`, optional `namespace`, optional `iam_user_ocid`, optional `endpoint_url`, optional `access_key_id`, optional `secret_access_key`, optional `addressing_style`, and optional `path`. `provider` is `oci` or `localstack`; `addressing_style` is `path` or `virtual`. For OCI routes, omit `endpoint_url` to derive `https://<namespace>.compat.objectstorage.<region>.oraclecloud.com`. `path` scopes the route to a prefix on that side and may be empty. When `destination.path` is omitted entirely it defaults to the resolved `source.path`, so archives land under the same prefix on the destination bucket; set `destination.path` to `""` to force the destination root instead.
 
-Keep credentials and shared S3 connection settings in environment variables. Missing location fields are resolved from the explicit route value, then the side-specific environment variable, then the shared `S3_*` environment variable, then a built-in default where one is valid. For example, `source.region` falls back to `S3_SOURCE_REGION`, then `S3_REGION`, then `us-east-1`; `destination.access_key_id` falls back to `S3_DESTINATION_ACCESS_KEY_ID`, then `S3_ACCESS_KEY_ID`. Buckets intentionally do not have a shared fallback: source buckets use `S3_SOURCE_BUCKET`, and destination buckets use `S3_DESTINATION_BUCKET`. Common shared defaults are `S3_PROVIDER`, `S3_REGION`, `S3_ENDPOINT_URL`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, `S3_NAMESPACE`, `S3_IAM_USER_OCID`, and `S3_ADDRESSING_STYLE`.
+Keep credentials and shared S3 connection settings in environment variables. Missing location fields are resolved from the explicit route value, then the side-specific environment variable, then the shared `S3_*` environment variable, then a built-in default where one is valid. For example, `source.region` falls back to `S3_SOURCE_REGION`, then `S3_REGION`, then `us-east-1`; `destination.access_key_id` falls back to `S3_DESTINATION_ACCESS_KEY_ID`, then `S3_ACCESS_KEY_ID`. Buckets intentionally do not have a shared fallback: source buckets use `S3_SOURCE_BUCKET`, and destination buckets use `S3_DESTINATION_BUCKET`. `destination.path` falls back to `S3_DESTINATION_PATH` and then to the resolved source path, so an empty `"destination": {}` object is the minimal archive form: same prefix, destination bucket. Common shared defaults are `S3_PROVIDER`, `S3_REGION`, `S3_ENDPOINT_URL`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, `S3_NAMESPACE`, `S3_IAM_USER_OCID`, and `S3_ADDRESSING_STYLE`.
 
 Parser behavior:
 
@@ -104,7 +104,7 @@ S3_DESTINATION_BUCKET=archive-bucket
 ARCHIVER_CONFIG_JSON=[{"name":"daily","parser":"filename_timestamp","copy_mode":"daily_tar_gz","source":{"path":"incoming/"},"destination":{}}]
 ```
 
-The route only includes `path` when it needs prefix scoping or placement. Shared S3 auth and connection values come from `S3_*`; bucket names come from the side-specific bucket env vars.
+The route only includes `source.path` here; the empty `"destination": {}` inherits the destination bucket from `S3_DESTINATION_BUCKET` and reuses the source path `incoming/`, so objects archive to `incoming/` on the destination bucket. Shared S3 auth and connection values come from `S3_*`; bucket names come from the side-specific bucket env vars.
 
 Equivalent expanded route example:
 
@@ -120,7 +120,7 @@ Equivalent expanded route example:
 ]
 ```
 
-Use explicit location fields only when a route differs from the env defaults. For example, set `source.path` to scope source selection to one prefix, or set `destination.path` for advanced placement of generated archives.
+Use explicit location fields only when a route differs from the env defaults. For example, set `source.path` to scope source selection to one prefix, or set `destination.path` to place generated archives under a different prefix than the source (or `""` to write them at the destination bucket root).
 
 ### Create A New Parser
 

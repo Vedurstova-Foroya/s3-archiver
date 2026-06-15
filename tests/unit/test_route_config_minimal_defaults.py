@@ -110,3 +110,69 @@ def test_from_env_rejects_same_storage_after_shared_defaults(tmp_path: Path) -> 
 
     with pytest.raises(ConfigError, match="source and destination storage locations"):
         _ = AppSettings.from_env(_shared_env(tmp_path, [route]))
+
+
+@pytest.mark.unit()
+def test_from_env_destination_path_defaults_to_source_path(tmp_path: Path) -> None:
+    route = _minimal_route()
+    source = cast(dict[str, object], route["source"])
+    source["path"] = "data/fae/"
+
+    settings = AppSettings.from_env(_shared_env(tmp_path, [route]))
+
+    assert settings.routes[0].source.path == "data/fae/"
+    assert settings.routes[0].destination.path == "data/fae/"
+
+
+@pytest.mark.unit()
+def test_from_env_empty_destination_object_is_minimal_archive(tmp_path: Path) -> None:
+    route = _minimal_route()
+    route["source"] = {"path": "data/fae/"}
+    route["destination"] = {}
+    env = _shared_env(tmp_path, [route])
+    env["S3_SOURCE_BUCKET"] = "source-bucket"
+    env["S3_DESTINATION_BUCKET"] = "archive-bucket"
+
+    settings = AppSettings.from_env(env)
+
+    assert settings.routes[0].destination.bucket == "archive-bucket"
+    assert settings.routes[0].destination.path == "data/fae/"
+
+
+@pytest.mark.unit()
+def test_from_env_explicit_destination_path_overrides_source_path(tmp_path: Path) -> None:
+    route = _minimal_route()
+    source = cast(dict[str, object], route["source"])
+    source["path"] = "data/fae/"
+    destination = cast(dict[str, object], route["destination"])
+    destination["path"] = "archives/fae/"
+
+    settings = AppSettings.from_env(_shared_env(tmp_path, [route]))
+
+    assert settings.routes[0].destination.path == "archives/fae/"
+
+
+@pytest.mark.unit()
+def test_from_env_explicit_empty_destination_path_stays_root(tmp_path: Path) -> None:
+    route = _minimal_route()
+    source = cast(dict[str, object], route["source"])
+    source["path"] = "data/fae/"
+    destination = cast(dict[str, object], route["destination"])
+    destination["path"] = ""
+
+    settings = AppSettings.from_env(_shared_env(tmp_path, [route]))
+
+    assert settings.routes[0].destination.path == ""
+
+
+@pytest.mark.unit()
+def test_from_env_destination_path_env_overrides_source_path(tmp_path: Path) -> None:
+    route = _minimal_route()
+    source = cast(dict[str, object], route["source"])
+    source["path"] = "data/fae/"
+    env = _shared_env(tmp_path, [route])
+    env["S3_DESTINATION_PATH"] = "archives/fae/"
+
+    settings = AppSettings.from_env(env)
+
+    assert settings.routes[0].destination.path == "archives/fae/"

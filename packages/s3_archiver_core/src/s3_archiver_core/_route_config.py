@@ -86,10 +86,9 @@ def _load_route_settings(decoder: EnvDecoder, raw_config: str) -> tuple[RouteSet
     if not isinstance(parsed, list) or len(cast(list[object], parsed)) == 0:
         decoder.fail("ARCHIVER_CONFIG_JSON", _ARRAY_ERROR)
         return None
-    parsed_routes = cast(list[object], parsed)
     routes: list[RouteSettings] = []
     names: set[str] = set()
-    for index, item in enumerate(parsed_routes):
+    for index, item in enumerate(cast(list[object], parsed)):
         route = _load_route(decoder, item, f"ARCHIVER_CONFIG_JSON[{index}]")
         if route is None:
             return None
@@ -110,8 +109,9 @@ def _load_route(decoder: EnvDecoder, item: object, field: str) -> RouteSettings 
     parser = _load_parser_kind(decoder, route, f"{field}.parser")
     copy_mode = _load_copy_mode(decoder, route, f"{field}.copy_mode")
     source = _load_location(decoder, route.get("source"), f"{field}.source", "SOURCE")
+    source_path = source.path if source is not None else ""
     destination = _load_location(
-        decoder, route.get("destination"), f"{field}.destination", "DESTINATION"
+        decoder, route.get("destination"), f"{field}.destination", "DESTINATION", source_path
     )
     if name is None or parser is None or copy_mode is None or source is None or destination is None:
         return None
@@ -170,7 +170,7 @@ def _validate_parser_copy_mode(
 
 
 def _load_location(
-    decoder: EnvDecoder, item: object, field: str, side: str
+    decoder: EnvDecoder, item: object, field: str, side: str, path_default: str = ""
 ) -> S3LocationSettings | None:
     location = _object_config(decoder, item, field)
     if location is None:
@@ -242,7 +242,7 @@ def _load_location(
         side,
         required=False,
         shared=False,
-        default="",
+        default=path_default,
     )
     if None in {access_key_id, secret_access_key, region, bucket, path}:
         return None
