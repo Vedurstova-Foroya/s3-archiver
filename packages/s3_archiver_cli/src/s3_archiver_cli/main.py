@@ -13,7 +13,7 @@ from typing import Annotated, NoReturn
 from uuid import uuid4
 
 import typer
-from s3_archiver_core.archive import ArchiveRoute, ArchiveRunResult, run_archive
+from s3_archiver_core.archive import ArchiveRunResult, run_archive
 from s3_archiver_core.archive_lock import FileArchiveRunLock
 from s3_archiver_core.archive_routes import archive_routes_from_settings
 from s3_archiver_core.errors import ArchiveRunError, S3ArchiverError
@@ -220,55 +220,55 @@ def _run_archive(settings: AppSettings, log_file: Path) -> dict[str, JsonValue]:
     ):
         raise ArchiveRunError("archive run lock is already held")
     chained_cleanup_payload: dict[str, JsonValue] | None = None
+    result: ArchiveRunResult | None = None
     try:
-        _run_records.record_started(
-            settings, run_id=locked_run_id, run_started_at_utc=started, log_file=log_file
-        )
-        prepare_runtime_temp_dir(settings.temp_dir)
-        _ = run_health_check(settings, log_file)
-        routes = archive_routes_from_settings(settings, build_s3_client)
-        result = _run_configured_archive(settings, routes, started)
-        if result.run_id != locked_run_id:
-            result = replace(result, run_id=locked_run_id)
-        chained_cleanup_payload = _cleanup_commands.export_and_chain_cleanup(
-            settings, routes, result, started, log_file
-        )
-    except Exception as exc:
-        error = exc if isinstance(exc, S3ArchiverError) else ArchiveRunError(str(exc))
-        _run_records.record_failure(
-            settings,
-            run_id=locked_run_id,
-            run_started_at_utc=started,
-            payload=_error_logging.error_payload(error, settings),
-            log_file=log_file,
-        )
-        if error is exc:
-            raise
-        raise error from exc
+        try:
+            _run_records.record_started(
+                settings, run_id=locked_run_id, run_started_at_utc=started, log_file=log_file
+            )
+            prepare_runtime_temp_dir(settings.temp_dir)
+            _ = run_health_check(settings, log_file)
+            routes = archive_routes_from_settings(settings, build_s3_client)
+            debug = _cli_payloads.log_transfer_decision if settings.log_level == "DEBUG" else None
+            result = run_archive(
+                routes,
+                run_timeout=settings.run_timeout,
+                run_started_at_utc=started,
+                debug_logger=debug,
+                progress_logger=ArchiveProgressReporter(),
+                date_range=settings.archive_date_range,
+            )
+            if result.run_id != locked_run_id:
+                result = replace(result, run_id=locked_run_id)
+            chained_cleanup_payload = _cleanup_commands.export_and_chain_cleanup(
+                settings, routes, result, started, log_file
+            )
+        except Exception as exc:
+            error = exc if isinstance(exc, S3ArchiverError) else ArchiveRunError(str(exc))
+            _run_records.record_failure(
+                settings,
+                run_id=locked_run_id,
+                run_started_at_utc=started,
+                payload=_error_logging.error_payload(error, settings),
+                log_file=log_file,
+            )
+            if error is exc:
+                raise
+            raise error from exc
+        finally:
+            run_lock.release(run_id=locked_run_id)
+        payload = _cli_payloads.archive_result_payload(result, settings, log_file)
+        if chained_cleanup_payload is not None:
+            payload["cleanup"] = chained_cleanup_payload
+        _run_records.record_result(settings, result=result, payload=payload, log_file=log_file)
+        return payload
     finally:
-        run_lock.release(run_id=locked_run_id)
-    payload = _cli_payloads.archive_result_payload(result, settings, log_file)
-    if chained_cleanup_payload is not None:
-        payload["cleanup"] = chained_cleanup_payload
-    _run_records.record_result(settings, result=result, payload=payload, log_file=log_file)
-    return payload
+        if result is not None:
+            result.manifest.close()
 
 
 def _run_archive_command(settings: AppSettings, log_file: Path) -> int:
     return run_archive_subprocess(settings, log_file, recovery_logger=_log_lock_recovery)
-
-
-def _run_configured_archive(
-    settings: AppSettings, routes: tuple[ArchiveRoute, ...], started: datetime
-) -> ArchiveRunResult:
-    return run_archive(
-        routes,
-        run_timeout=settings.run_timeout,
-        run_started_at_utc=started,
-        debug_logger=_cli_payloads.log_transfer_decision if settings.log_level == "DEBUG" else None,
-        progress_logger=ArchiveProgressReporter(),
-        date_range=settings.archive_date_range,
-    )
 
 
 def _emit_archive_payload(payload: Mapping[str, JsonValue]) -> bool:
