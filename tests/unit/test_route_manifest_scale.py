@@ -131,3 +131,83 @@ def _streamed_group_object_count(manifest: ArchiveManifest) -> int:
 
 class _DestinationStub:
     bucket: str = "scale-archive"
+
+
+_SCALE_SMALL_DAYS = 20
+_SCALE_SMALL_PER_DAY = 100
+_SCALE_BIG_DAY_COUNT = 50_000
+_MAX_DESTINATION_ARCHIVE_SIZE_MIB = "4"
+_DROPPED_GROUP_REASON = (
+    "estimated destination archive size 52249600 exceeds max destination archive size 4194304"
+)
+
+
+class _OversizedGroupSource:
+    """Source whose in-policy day groups coexist with one oversized day group."""
+
+    bucket: str = "scale-source"
+
+    def versioning_state(self) -> VersioningState:
+        return "Enabled"
+
+    def list_source_objects(
+        self, versioning_state: VersioningState, *, prefix: str = ""
+    ) -> Iterator[S3ListedObject]:
+        assert versioning_state == "Enabled"
+        _ = prefix
+        yield from _iter_small_day_objects()
+        yield from _iter_big_day_objects()
+
+
+def _iter_small_day_objects() -> Iterator[S3ListedObject]:
+    for day in range(1, _SCALE_SMALL_DAYS + 1):
+        for offset in range(_SCALE_SMALL_PER_DAY):
+            hour, minute, second = offset // 3600, (offset // 60) % 60, offset % 60
+            stamp = f"2026-03-{day:02d}T{hour:02d}-{minute:02d}-{second:02d}Z"
+            key = f"data/fae/2026-03-{day:02d}/{stamp}.xml"
+            yield _listed(key, version_id=f"s{day}-{offset}", size=10)
+
+
+def _iter_big_day_objects() -> Iterator[S3ListedObject]:
+    for offset in range(_SCALE_BIG_DAY_COUNT):
+        hour, minute, second = offset // 3600, (offset // 60) % 60, offset % 60
+        stamp = f"2026-04-15T{hour:02d}-{minute:02d}-{second:02d}Z"
+        key = f"data/fae/2026-04-15/{stamp}.xml"
+        yield _listed(key, version_id=f"big{offset}", size=10)
+
+
+@pytest.mark.unit()
+@pytest.mark.slow()
+def test_route_manifest_drops_oversized_group_at_scale(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv(
+        "ARCHIVER_MAX_DESTINATION_ARCHIVE_SIZE_MIB", _MAX_DESTINATION_ARCHIVE_SIZE_MIB
+    )
+    source = _OversizedGroupSource()
+
+    manifest = build_route_archive_manifest(
+        (
+            ArchiveManifestRoute(
+                "fae",
+                source,
+                _DestinationStub(),
+                source_path="data/fae/",
+                destination_path="archives/fae/",
+                parser_kind="filename_timestamp",
+                copy_mode="daily_tar_gz",
+            ),
+        ),
+        run_started_at_utc=STARTED,
+        temp_dir=tmp_path,
+    )
+    try:
+        kept = _SCALE_SMALL_DAYS * _SCALE_SMALL_PER_DAY
+        assert manifest.store is not None
+        assert _streamed_entry_count(manifest) == kept
+        assert len(manifest.archive_groups) == _SCALE_SMALL_DAYS
+        assert _streamed_group_object_count(manifest) == kept
+        assert _streamed_skipped_count(manifest) == _SCALE_BIG_DAY_COUNT
+        assert all(item.reason == _DROPPED_GROUP_REASON for item in manifest.skipped_objects)
+    finally:
+        manifest.close()
