@@ -38,32 +38,13 @@ def source_object_skip_reason(size: int) -> str | None:
     return f"source object size {size} exceeds max source object size {limit}"
 
 
-def filter_archive_groups_by_size(
-    entries: Sequence[ManifestEntry],
-    groups: Sequence[ArchiveGroup],
-    skipped: Sequence[SkippedObject],
-) -> tuple[tuple[ManifestEntry, ...], tuple[ArchiveGroup, ...], tuple[SkippedObject, ...]]:
-    """Remove archive groups whose estimated staged archive size exceeds policy."""
+def archive_group_skip_reason(estimated_size: int, limit: int) -> str:
+    """Return the skip reason when an archive group exceeds the size policy."""
 
-    limit = max_destination_archive_size_bytes()
-    skipped_entry_ids: set[tuple[object | None, str, str, str | None]] = set()
-    skipped_objects = list(skipped)
-    kept_groups: list[ArchiveGroup] = []
-    for group in groups:
-        estimated_size = estimated_archive_size_bytes(group.entries)
-        if estimated_size <= limit:
-            kept_groups.append(group)
-            continue
-        reason = (
-            f"estimated destination archive size {estimated_size} exceeds "
-            f"max destination archive size {limit}"
-        )
-        _log_archive_group_skip(group, reason, estimated_size, limit)
-        for entry in group.entries:
-            skipped_entry_ids.add(_entry_id(entry))
-            skipped_objects.append(_skipped_archive_entry(entry, reason))
-    kept_entries = tuple(entry for entry in entries if _entry_id(entry) not in skipped_entry_ids)
-    return kept_entries, tuple(kept_groups), tuple(skipped_objects)
+    return (
+        f"estimated destination archive size {estimated_size} exceeds "
+        f"max destination archive size {limit}"
+    )
 
 
 def estimated_archive_size_bytes(entries: Iterable[ManifestEntry]) -> int:
@@ -117,7 +98,7 @@ def log_skipped_summary(skipped: Sequence[SkippedObject]) -> None:
     )
 
 
-def _skipped_archive_entry(entry: ManifestEntry, reason: str) -> SkippedObject:
+def skipped_archive_entry(entry: ManifestEntry, reason: str) -> SkippedObject:
     return SkippedObject(
         key=entry.key,
         reason=reason,
@@ -141,7 +122,7 @@ def _skipped_archive_entry(entry: ManifestEntry, reason: str) -> SkippedObject:
     )
 
 
-def _log_archive_group_skip(
+def log_archive_group_skip(
     group: ArchiveGroup, reason: str, estimated_size: int, max_size: int
 ) -> None:
     _LOGGER.warning(
@@ -162,10 +143,6 @@ def _log_archive_group_skip(
             "max_destination_archive_size_bytes": max_size,
         },
     )
-
-
-def _entry_id(entry: ManifestEntry) -> tuple[object | None, str, str, str | None]:
-    return (entry.source_identity, entry.source_bucket, entry.key, entry.version_id)
 
 
 def _tar_padded_size(size: int) -> int:

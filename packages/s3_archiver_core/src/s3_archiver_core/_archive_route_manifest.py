@@ -2,9 +2,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Iterable
-from dataclasses import replace
 from datetime import datetime
-from itertools import chain
 from pathlib import Path
 
 from s3_archiver_core._archive_env import positive_int_env
@@ -30,7 +28,6 @@ from s3_archiver_core._archive_manifest_paths import (
 from s3_archiver_core._archive_manifest_store import SQLiteManifestStore
 from s3_archiver_core._archive_size_limits import (
     estimated_archive_size_bytes,
-    filter_archive_groups_by_size,
     max_destination_archive_size_bytes,
 )
 from s3_archiver_core.archive_date_range import NO_DATE_RANGE, ArchiveDateRange
@@ -111,32 +108,18 @@ def _build_with_store(
     _stream_routes_into_store(store, route_tuple, run_started, progress_logger, date_range)
     store.commit()
     store.assert_no_duplicate_sources()
-    if not _archive_size_filter_needed(store.archive_groups):
-        store.assert_no_duplicate_destinations()
-        return ArchiveManifest(
-            run_started,
-            store.entries,
-            None,
-            store.archive_groups,
-            store.skipped_objects,
-            "sqlite",
-            store.entry_size_sum(),
-            store=store,
-        )
-    entries_tuple, groups_tuple, skipped_tuple = filter_archive_groups_by_size(
-        tuple(store.entries), tuple(store.archive_groups), tuple(store.skipped_objects)
-    )
-    groups_tuple = tuple(replace(group, entries=tuple(group.entries)) for group in groups_tuple)
-    _reject_duplicate_destinations(entries_tuple, groups_tuple)
-    store.cleanup()
+    if _archive_size_filter_needed(store.archive_groups):
+        _ = store.drop_oversized_groups(max_destination_archive_size_bytes())
+    store.assert_no_duplicate_destinations()
     return ArchiveManifest(
         run_started,
-        entries_tuple,
+        store.entries,
         None,
-        groups_tuple,
-        skipped_tuple,
+        store.archive_groups,
+        store.skipped_objects,
         "sqlite",
-        sum(entry.size for entry in entries_tuple),
+        store.entry_size_sum(),
+        store=store,
     )
 
 
@@ -229,35 +212,3 @@ def _list_progress_total() -> int:
 
 def _list_progress(completed: int, estimated_total: int) -> ArchiveProgress:
     return ArchiveProgress("list", completed, max(estimated_total, completed + 1))
-
-
-def _reject_duplicate_destinations(
-    entries: Iterable[ManifestEntry], groups: Iterable[ArchiveGroup]
-) -> None:
-    _reject_duplicate_identities(
-        chain(
-            (
-                (entry.destination_identity, entry.destination_bucket, entry.destination_key)
-                for entry in entries
-                if entry.copy_mode == "direct"
-            ),
-            (
-                (
-                    group.destination_identity,
-                    group.destination_bucket,
-                    group.destination_archive_key,
-                )
-                for group in groups
-            ),
-        ),
-        "duplicate destination object identity",
-    )
-
-
-def _reject_duplicate_identities(keys: Iterable[object], message: str) -> None:
-    seen: set[str] = set()
-    for key in keys:
-        stable_key = repr(stable_identity_value(key))
-        if stable_key in seen:
-            raise ValueError(message)
-        seen.add(stable_key)

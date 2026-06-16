@@ -17,12 +17,12 @@ from s3_archiver_core._archive_manifest_sqlite import (
     unpack_entry,
 )
 
-_GROUP_WHERE = """
+GROUP_WHERE = """
 route_name = ? AND copy_mode = ? AND archive_root = ? AND target_day = ?
 AND destination_bucket = ? AND destination_archive_key = ?
 AND destination_identity = ?
 """
-_GROUP_ENTRY_ORDER = "key, id"
+GROUP_ENTRY_ORDER = "key, id"
 _CHUNK_COLUMNS = (
     "route_name, copy_mode, archive_root, target_day, destination_bucket, "
     "destination_archive_key, destination_identity, parser_kind, "
@@ -224,7 +224,7 @@ def _iter_group_entry_rows(
     offset: int = 0,
     limit: int | None = None,
 ) -> Iterator[tuple[object, ...]]:
-    query = "SELECT payload FROM entries WHERE " + _GROUP_WHERE + " ORDER BY " + _GROUP_ENTRY_ORDER
+    query = "SELECT payload FROM entries WHERE " + GROUP_WHERE + " ORDER BY " + GROUP_ENTRY_ORDER
     params = row
     if limit is not None:
         query += " LIMIT ? OFFSET ?"

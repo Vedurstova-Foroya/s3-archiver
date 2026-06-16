@@ -16,6 +16,7 @@ from s3_archiver_core._archive_manifest_destination_checks import (
     has_duplicate_archive_destination,
     has_duplicate_direct_destination,
 )
+from s3_archiver_core._archive_manifest_drop import drop_oversized_chunks
 from s3_archiver_core._archive_manifest_group_queries import (
     chunk_row_at,
     group_from_chunk_row,
@@ -47,6 +48,7 @@ _INSERT_ENTRY_SQL = (
     + "destination_archive_key, target_day, archive_root, size, payload) "
     + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
 )
+_INSERT_SKIPPED_SQL = "INSERT INTO skipped (payload) VALUES (?)"
 _DUPLICATE_SOURCE_SQL = (
     "SELECT source_identity, source_bucket, key, version_id FROM entries "
     + "GROUP BY source_identity, source_bucket, key, version_id "
@@ -89,8 +91,7 @@ class SQLiteManifestStore:
         self._reader_connections: dict[int, sqlite3.Connection] = {}
         self._group_count: int | None = None
         self._committed = False
-        _ = self._connection.execute("PRAGMA journal_mode=OFF")
-        _ = self._connection.execute("PRAGMA synchronous=OFF")
+        _ = self._connection.executescript("PRAGMA journal_mode=OFF; PRAGMA synchronous=OFF")
         self._create_schema()
 
     @classmethod
@@ -130,15 +131,11 @@ class SQLiteManifestStore:
 
     def add_skipped(self, skipped: SkippedObject) -> None:
         with self._connection_lock:
-            _ = self._connection.execute(
-                "INSERT INTO skipped (payload) VALUES (?)", (pack(skipped),)
-            )
+            _ = self._connection.execute(_INSERT_SKIPPED_SQL, (pack(skipped),))
 
     def add_skipped_objects(self, items: Iterable[SkippedObject]) -> None:
         with self._connection_lock:
-            _ = self._connection.executemany(
-                "INSERT INTO skipped (payload) VALUES (?)", [(pack(item),) for item in items]
-            )
+            _ = self._connection.executemany(_INSERT_SKIPPED_SQL, [(pack(item),) for item in items])
         self._group_count = None
 
     def commit(self) -> None:
@@ -163,6 +160,15 @@ class SQLiteManifestStore:
             or has_direct_archive_destination_collision(self._connection)
         ):
             raise ValueError("duplicate destination object identity")
+
+    def drop_oversized_groups(self, limit: int) -> int:
+        """Drop archive groups whose estimated size exceeds ``limit`` in place."""
+
+        with self._connection_lock:
+            dropped = drop_oversized_chunks(self._connection, limit)
+            if dropped:
+                self._group_count = None
+        return dropped
 
     def entry_count(self) -> int:
         with self._connection_lock:
