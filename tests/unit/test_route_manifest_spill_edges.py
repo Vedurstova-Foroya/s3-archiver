@@ -71,12 +71,7 @@ def test_legacy_source_list_requires_no_source_path() -> None:
 
 
 @pytest.mark.unit()
-def test_route_manifest_spill_moves_memory_entries_and_skips(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    import s3_archiver_core._archive_route_manifest as route_manifest_module
-
-    monkeypatch.setattr(route_manifest_module, "_SQLITE_MANIFEST_ENTRY_THRESHOLD", 2)
+def test_route_manifest_stores_entries_and_skips_in_sqlite() -> None:
     future = datetime(2026, 4, 28, tzinfo=UTC)
     source = FakeBucket(
         "source",

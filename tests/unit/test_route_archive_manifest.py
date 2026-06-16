@@ -176,12 +176,7 @@ def test_route_manifest_keeps_parser_selection_independent_from_copy_mode() -> N
 
 
 @pytest.mark.unit()
-def test_route_manifest_spills_to_sqlite_and_keeps_lazy_groups(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    import s3_archiver_core._archive_route_manifest as route_manifest_module
-
-    monkeypatch.setattr(route_manifest_module, "_SQLITE_MANIFEST_ENTRY_THRESHOLD", 0)
+def test_route_manifest_uses_sqlite_and_keeps_lazy_groups() -> None:
     source = FakeBucket(
         "daily-source",
         (

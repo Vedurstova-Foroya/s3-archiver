@@ -149,7 +149,7 @@ def test_stale_verified_archive_is_refreshed_for_late_arriving_prior_day_objects
     archive_key = "data/harmonie/processor/2026-05-21.tar.gz"
     first_payload = destination.destination_payload(archive_key)
     assert first.ok is True
-    assert first.manifest.skipped_objects == ()
+    assert len(first.manifest.skipped_objects) == 0
 
     second_source = FakeBucket("source", (original, late, current_day))
     second = run_archive(

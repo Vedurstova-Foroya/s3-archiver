@@ -47,7 +47,7 @@ def test_open_range_keeps_every_eligible_object() -> None:
         date(2020, 12, 31),
         date(2021, 1, 1),
     ]
-    assert manifest.skipped_objects == ()
+    assert len(manifest.skipped_objects) == 0
 
 
 @pytest.mark.unit()
@@ -94,7 +94,7 @@ def test_incomplete_utc_day_guard_takes_precedence_over_range() -> None:
         date_range=ArchiveDateRange(date(2026, 1, 1), date(2026, 1, 1)),
     )
 
-    assert manifest.entries == ()
+    assert len(manifest.entries) == 0
     assert [obj.reason for obj in manifest.skipped_objects] == [
         "parser timestamp in incomplete UTC day"
     ]

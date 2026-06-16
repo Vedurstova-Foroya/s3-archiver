@@ -93,7 +93,7 @@ def test_route_manifest_allows_non_overlapping_source_paths_on_same_storage() ->
         run_started_at_utc=STARTED,
     )
 
-    assert manifest.entries == ()
+    assert len(manifest.entries) == 0
 
 
 @pytest.mark.unit()
@@ -128,4 +128,4 @@ def test_route_manifest_allows_sibling_source_paths_on_same_storage(
         run_started_at_utc=STARTED,
     )
 
-    assert manifest.entries == ()
+    assert len(manifest.entries) == 0

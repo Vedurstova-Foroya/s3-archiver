@@ -45,7 +45,7 @@ def test_route_manifest_skips_unselected_objects_and_records_storage_identity() 
         copy_mode="daily_tar_gz",
     )
 
-    assert skipped_manifest.entries == ()
+    assert len(skipped_manifest.entries) == 0
     assert skipped_manifest.skipped_objects[0].reason == "no reliable key timestamp"
 
     source = IdentityBucket(

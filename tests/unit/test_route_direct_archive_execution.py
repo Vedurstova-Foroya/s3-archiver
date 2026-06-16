@@ -100,7 +100,7 @@ def test_run_archive_direct_copy_mode_skips_future_last_modified_before_copy() -
     )
 
     assert result.ok is True
-    assert result.manifest.entries == ()
+    assert len(result.manifest.entries) == 0
     assert [(item.key, item.reason) for item in result.manifest.skipped_objects] == [
         ("data/future.txt", "parser timestamp in incomplete UTC day")
     ]

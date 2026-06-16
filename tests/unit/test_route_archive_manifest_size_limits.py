@@ -40,7 +40,7 @@ def test_route_manifest_skips_source_objects_above_configured_size_limit(
             run_started_at_utc=STARTED,
         )
 
-    assert manifest.entries == ()
+    assert len(manifest.entries) == 0
     assert len(manifest.skipped_objects) == 1
     assert manifest.skipped_objects[0].key == "raw/large.bin"
     assert manifest.skipped_objects[0].reason == (
@@ -78,8 +78,8 @@ def test_route_manifest_skips_archive_groups_above_configured_archive_size_limit
             run_started_at_utc=STARTED,
         )
 
-    assert manifest.entries == ()
-    assert manifest.archive_groups == ()
+    assert len(manifest.entries) == 0
+    assert len(manifest.archive_groups) == 0
     assert len(manifest.skipped_objects) == 1
     assert manifest.skipped_objects[0].key == "data/fae/2026-04-13T03-00-00Z.xml"
     assert manifest.skipped_objects[0].reason == (
@@ -113,19 +113,20 @@ def test_route_manifest_uses_default_source_size_limit_for_invalid_env(
     )
 
     assert len(manifest.entries) == 1
-    assert manifest.skipped_objects == ()
+    assert len(manifest.skipped_objects) == 0
 
 
 @pytest.mark.unit()
-def test_route_manifest_sqlite_skips_archive_groups_above_configured_archive_size_limit(
+def test_route_manifest_keeps_in_policy_groups_when_others_exceed_size_limit(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import s3_archiver_core._archive_route_manifest as route_manifest_module
-
-    monkeypatch.setattr(route_manifest_module, "_SQLITE_MANIFEST_ENTRY_THRESHOLD", 0)
-    monkeypatch.setenv("ARCHIVER_MAX_DESTINATION_ARCHIVE_SIZE_MIB", "1")
+    monkeypatch.setenv("ARCHIVER_MAX_DESTINATION_ARCHIVE_SIZE_MIB", "2")
     source = FakeBucket(
-        "source", (_large_listed("data/fae/2026-04-13T03-00-00Z.xml", size=2 * 1024 * 1024),)
+        "source",
+        (
+            _large_listed("data/fae/2026-04-12T03-00-00Z.xml", size=4 * 1024 * 1024),
+            _listed("data/fae/2026-04-13T03-00-00Z.xml", 1, "v2"),
+        ),
     )
 
     manifest = build_route_archive_manifest(
@@ -142,9 +143,12 @@ def test_route_manifest_sqlite_skips_archive_groups_above_configured_archive_siz
     )
 
     assert manifest.manifest_storage == "sqlite"
-    assert manifest.entries == ()
-    assert manifest.archive_groups == ()
-    assert len(manifest.skipped_objects) == 1
+    assert manifest.store is None
+    assert [entry.key for entry in manifest.entries] == ["data/fae/2026-04-13T03-00-00Z.xml"]
+    assert [group.destination_archive_key for group in manifest.archive_groups] == [
+        "data/fae/2026-04-13.tar.gz"
+    ]
+    assert {item.key for item in manifest.skipped_objects} == {"data/fae/2026-04-12T03-00-00Z.xml"}
 
 
 def _large_listed(key: str, *, size: int) -> S3ListedObject:

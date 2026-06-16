@@ -34,7 +34,7 @@ def test_manifest_normalizes_non_utc_run_start_before_target_day_selection() -> 
         "data/fae/2026-04-13T00-00-00Z.xml",
         "data/fae/2026-04-14T00-00-00Z.xml",
     ]
-    assert manifest.skipped_objects == ()
+    assert len(manifest.skipped_objects) == 0
 
 
 @pytest.mark.unit()
