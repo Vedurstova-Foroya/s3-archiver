@@ -66,6 +66,7 @@ markers = [
   "unit: fast tests for isolated modules",
   "integration: tests requiring LocalStack",
   "e2e: tests requiring Docker Compose",
+  "slow: long-running scale/load tests",
 ]
 testpaths = ["tests"]
 
