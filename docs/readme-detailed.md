@@ -320,6 +320,23 @@ ARCHIVER_SCHEDULE_UTC=02:00 docker compose up -d scheduler
 docker compose logs -f scheduler
 ```
 
+For a single on-demand pass without the scheduler loop, use the one-off `archive`
+service. It runs once and exits (no restart policy), is owned by the Docker daemon
+so it survives a shell logout, and is tailable through `docker compose logs`:
+
+```bash
+docker compose up -d --build archive   # run one archive pass in the background
+docker compose logs archive            # show the output so far
+docker compose logs -f archive         # follow the live output
+```
+
+Re-running `docker compose up -d --build archive` triggers another pass and keeps
+appending to the same container's logs; `docker compose rm archive` clears them. The
+generic `app` service still backs the foreground one-off commands
+(`docker compose run --rm app check`, `... cleanup`); `app`, `archive`, and
+`scheduler` share one image build and run the same entrypoint with different
+commands.
+
 If you prefer a host scheduler such as systemd, point it at one `archive` invocation and keep catch-up disabled. For a timer unit, set `Persistent=false` so missed runs are not replayed.
 
 Do not schedule the same archive from GitHub Actions, host cron, systemd, and a container at the same time. Archive exclusivity is acquired before S3 preflight work starts, the lock lives in `LOG_DIR`, and stale-lock recovery is limited to timed-out runs, invalid lock metadata, or a dead owner process proven on the current host.

@@ -5,51 +5,44 @@ x-archiver-temp-volume: &archiver-temp-volume
   bind:
     create_host_path: true
 
-services:
-  app:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      target: runtime
-    depends_on:
-      localstack:
-        condition: service_healthy
-        required: false
-    env_file:
-      - ${APP_ENV_FILE:-.env}
-    environment:
-      APP_ENV_FILE: ${APP_ENV_FILE:-.env}
-      ARCHIVER_TEMP_DIR: ${ARCHIVER_TEMP_DIR:-/tmp/s3-archiver}
-      LOG_DIR: /var/log/s3-archiver
-    labels:
-      s3-archiver.env.ARCHIVER_CONFIG_JSON: env_file
-    volumes:
-      - app_logs:/var/log/s3-archiver
-      - *archiver-temp-volume
+x-archiver-service: &archiver-service
+  build:
+    context: .
+    dockerfile: Dockerfile
+    target: runtime
+  depends_on:
+    localstack:
+      condition: service_healthy
+      required: false
+  env_file:
+    - ${APP_ENV_FILE:-.env}
+  environment:
+    APP_ENV_FILE: ${APP_ENV_FILE:-.env}
+    ARCHIVER_TEMP_DIR: ${ARCHIVER_TEMP_DIR:-/tmp/s3-archiver}
+    LOG_DIR: /var/log/s3-archiver
+  labels:
+    s3-archiver.env.ARCHIVER_CONFIG_JSON: env_file
+  volumes:
+    - app_logs:/var/log/s3-archiver
+    - *archiver-temp-volume
 
+services:
+  # Generic one-off runner: `docker compose run --rm app <check|cleanup|...>`.
+  app:
+    <<: *archiver-service
+
+  # One archive pass in the background: `docker compose up -d --build archive`,
+  # then `docker compose logs -f archive`. Runs once and exits (no restart).
+  archive:
+    <<: *archiver-service
+    command: ["archive"]
+
+  # Long-running once-per-day UTC scheduler loop: `docker compose up -d scheduler`.
   scheduler:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      target: runtime
+    <<: *archiver-service
     command: ["schedule"]
-    depends_on:
-      localstack:
-        condition: service_healthy
-        required: false
-    env_file:
-      - ${APP_ENV_FILE:-.env}
-    environment:
-      APP_ENV_FILE: ${APP_ENV_FILE:-.env}
-      ARCHIVER_TEMP_DIR: ${ARCHIVER_TEMP_DIR:-/tmp/s3-archiver}
-      LOG_DIR: /var/log/s3-archiver
-    labels:
-      s3-archiver.env.ARCHIVER_CONFIG_JSON: env_file
     restart: unless-stopped
     stop_grace_period: ${ARCHIVER_SCHEDULER_STOP_GRACE_PERIOD:-2m}
-    volumes:
-      - app_logs:/var/log/s3-archiver
-      - *archiver-temp-volume
 
   localstack:
     image: localstack/localstack:4.8.1

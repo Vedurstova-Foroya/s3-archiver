@@ -16,11 +16,26 @@ default it reads `.env` from the repo root — start from `.env.example`
 `ARCHIVER_CONFIG_JSON`. Override the path with `APP_ENV_FILE=...` if you
 keep it elsewhere.
 
+## Run an archive pass
+
+Run one archive pass in the background (it is owned by the Docker daemon, so it
+survives a shell logout) and watch its output:
+
 ```bash
-docker compose run --rm app check     # validate config + S3
-docker compose run --rm app archive   # one archive pass (writes a cleanup manifest)
-docker compose run --rm app cleanup   # delete the archived source objects
-docker compose logs -f scheduler                  # tail the loop
+docker compose up -d --build archive   # run one archive pass in the background
+docker compose logs archive            # show the output so far
+docker compose logs -f archive         # follow the live output
+```
+
+The `archive` container runs once and exits (it does not restart). Re-run
+`docker compose up -d --build archive` to trigger another pass; logs from earlier
+passes stay available until you `docker compose rm archive`. Each pass writes a
+cleanup manifest of the source objects it archived.
+
+```bash
+docker compose run --rm app check      # validate config + S3
+docker compose run --rm app cleanup    # delete the archived source objects
+docker compose logs -f scheduler       # tail the scheduler loop
 ```
 
 Set `CLEANUP=true` to delete archived source objects automatically after each
