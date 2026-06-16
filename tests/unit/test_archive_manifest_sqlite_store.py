@@ -23,10 +23,9 @@ from s3_archiver_core._archive_manifest_group_queries import (
 from s3_archiver_core._archive_manifest_groups import (
     ArchiveChunkSizer,
     archive_chunk_key,
-    archive_chunk_ranges,
-    archive_groups,
 )
 from s3_archiver_core._archive_manifest_models import (
+    ArchiveGroup,
     CopyMode,
     ManifestEntry,
     SkippedObject,
@@ -182,18 +181,6 @@ def test_sqlite_helpers_cover_error_edges() -> None:
 @pytest.mark.unit()
 def test_archive_group_helpers_cover_chunk_edges(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("ARCHIVER_ARCHIVE_GROUP_MAX_OBJECTS", "1")
-    groups = archive_groups(
-        (
-            _entry("direct.txt", copy_mode="direct", target_day=None),
-            _entry("missing-day.txt", target_day=None),
-            _entry("data/b.xml"),
-            _entry("data/a.xml"),
-        )
-    )
-
-    assert [group.entries[0].key for group in groups] == ["data/a.xml", "data/b.xml"]
-    assert list(archive_chunk_ranges([])) == []
-    assert list(archive_chunk_ranges([1, 1])) == [(1, 0, 1), (2, 1, 1)]
     assert archive_chunk_key("archive.tar.gz", 2) == "archive.part-00002.tar.gz"
     assert archive_chunk_key("archive", 2) == "archive.part-00002"
     sizer = ArchiveChunkSizer()
@@ -237,7 +224,15 @@ def test_sqlite_manifest_store_reaps_reader_connection_after_thread_exit(
 def test_copy_route_helpers_fallback_without_sqlite_sequences() -> None:
     direct = _entry("raw/a.txt", copy_mode="direct", route_name="raw", target_day=None)
     daily = _entry("data/a.xml", route_name="daily")
-    groups = archive_groups((daily,))
+    groups = (
+        ArchiveGroup(
+            target_day=TARGET_DAY,
+            archive_root="",
+            destination_archive_key="2026-04-13",
+            entries=(daily,),
+            route_name="daily",
+        ),
+    )
 
     assert [entry.key for entry in direct_entries_for_route((direct, daily), "raw")] == [
         "raw/a.txt"
