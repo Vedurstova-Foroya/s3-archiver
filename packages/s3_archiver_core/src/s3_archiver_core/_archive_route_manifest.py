@@ -22,7 +22,8 @@ from s3_archiver_core._archive_manifest_models import (
 )
 from s3_archiver_core._archive_manifest_paths import (
     as_utc,
-    route_paths_overlap,
+    route_path_prefix,
+    route_path_strictly_nested,
     storage_identity,
 )
 from s3_archiver_core._archive_manifest_store import SQLiteManifestStore
@@ -51,10 +52,12 @@ def build_route_archive_manifest(
 
     run_started = as_utc(run_started_at_utc)
     route_tuple = tuple(routes)
-    _reject_overlapping_source_paths(route_tuple)
+    exclusions = _route_exclusion_prefixes(route_tuple)
     store = SQLiteManifestStore.temporary(_resolve_store_dir(temp_dir))
     try:
-        return _build_with_store(store, route_tuple, run_started, progress_logger, date_range)
+        return _build_with_store(
+            store, route_tuple, run_started, progress_logger, date_range, exclusions
+        )
     except Exception:
         store.cleanup()
         raise
@@ -104,8 +107,11 @@ def _build_with_store(
     run_started: datetime,
     progress_logger: ProgressLogger | None,
     date_range: ArchiveDateRange,
+    exclusions: dict[int, tuple[str, ...]],
 ) -> ArchiveManifest:
-    _stream_routes_into_store(store, route_tuple, run_started, progress_logger, date_range)
+    _stream_routes_into_store(
+        store, route_tuple, run_started, progress_logger, date_range, exclusions
+    )
     store.commit()
     store.assert_no_duplicate_sources()
     if _archive_size_filter_needed(store.archive_groups):
@@ -129,12 +135,13 @@ def _stream_routes_into_store(
     run_started: datetime,
     progress_logger: ProgressLogger | None,
     date_range: ArchiveDateRange,
+    exclusions: dict[int, tuple[str, ...]],
 ) -> None:
     entry_buffer: list[ManifestEntry] = []
     skipped_buffer: list[SkippedObject] = []
     listed_count = 0
     list_progress_total = _list_progress_total()
-    for route in route_tuple:
+    for index, route in enumerate(route_tuple):
         for item in iter_archive_manifest_items(
             route.source,
             run_started_at_utc=run_started,
@@ -148,6 +155,7 @@ def _stream_routes_into_store(
             source_identity=route.source_identity,
             destination_identity=route.destination_identity,
             date_range=date_range,
+            exclude_prefixes=exclusions.get(index, ()),
         ):
             listed_count += 1
             if progress_logger is not None:
@@ -180,21 +188,26 @@ def _resolve_store_dir(temp_dir: Path | None) -> Path:
     return store_dir
 
 
-def _reject_overlapping_source_paths(routes: tuple[ArchiveManifestRouteSpec, ...]) -> None:
-    seen: dict[str, list[tuple[str, str]]] = {}
-    for route in routes:
+def _route_exclusion_prefixes(
+    routes: tuple[ArchiveManifestRouteSpec, ...],
+) -> dict[int, tuple[str, ...]]:
+    """Map route index -> source prefixes of strictly-nested same-storage routes."""
+    by_identity: dict[str, list[tuple[int, str]]] = {}
+    for index, route in enumerate(routes):
         identity = repr(
             stable_identity_value(route.source_identity or storage_identity(route.source))
         )
-        path = route.source_path
-        for other_name, other_path in seen.setdefault(identity, []):
-            if route_paths_overlap(path, other_path):
-                message = (
-                    f"overlapping source paths for storage location: {other_name!r} "
-                    f"and {route.name!r}"
-                )
-                raise ValueError(message)
-        seen[identity].append((route.name, path))
+        by_identity.setdefault(identity, []).append((index, route.source_path))
+
+    exclusions: dict[int, tuple[str, ...]] = {}
+    for members in by_identity.values():
+        for index, path in members:
+            exclusions[index] = tuple(
+                route_path_prefix(other_path)
+                for other_index, other_path in members
+                if other_index != index and route_path_strictly_nested(other_path, path)
+            )
+    return exclusions
 
 
 def _route_versioning_state(route: ArchiveManifestRouteSpec) -> VersioningState:

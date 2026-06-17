@@ -18,6 +18,7 @@ from s3_archiver_core._archive_manifest_paths import (
     join_key,
     normalize_prefix,
     relative_key,
+    route_path_prefix,
     storage_identity,
 )
 from s3_archiver_core._archive_manifest_selection import select_object
@@ -50,6 +51,7 @@ def iter_archive_manifest_items(
     source_identity: object | None = None,
     destination_identity: object | None = None,
     date_range: ArchiveDateRange = NO_DATE_RANGE,
+    exclude_prefixes: tuple[str, ...] = (),
 ) -> Iterator[ManifestEntry | SkippedObject]:
     """Yield selected and skipped manifest rows without retaining them in memory."""
 
@@ -63,12 +65,17 @@ def iter_archive_manifest_items(
         destination_path=normalize_prefix(destination_path),
         source_identity=source_identity or storage_identity(source),
         destination_identity=destination_identity or storage_identity(destination),
+        exclude_prefixes=tuple(route_path_prefix(prefix) for prefix in exclude_prefixes),
     )
     run_started = as_utc(run_started_at_utc)
     run_started_day = run_started.date()
     max_source_size = max_source_object_size_bytes()
     for listed in _list_source_objects(source, versioning_state, context.source_path):
         if context.source_path and not listed.key.startswith(context.source_path):
+            continue
+        if context.exclude_prefixes and any(
+            listed.key.startswith(excluded) for excluded in context.exclude_prefixes
+        ):
             continue
         if reason := source_object_skip_reason(listed.size):
             skipped = context.skipped_object(listed, reason)
@@ -121,6 +128,7 @@ class _ManifestBuildContext:
     destination_path: str
     source_identity: object | None
     destination_identity: object | None
+    exclude_prefixes: tuple[str, ...]
 
     @property
     def destination_bucket(self) -> str:

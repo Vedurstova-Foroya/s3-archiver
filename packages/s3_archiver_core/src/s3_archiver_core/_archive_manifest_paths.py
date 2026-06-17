@@ -50,10 +50,11 @@ def route_path_prefix(path: str) -> str:
     return f"{normalized}/"
 
 
-def route_paths_overlap(left: str, right: str) -> bool:
-    left_prefix = route_path_prefix(left)
-    right_prefix = route_path_prefix(right)
-    return left_prefix.startswith(right_prefix) or right_prefix.startswith(left_prefix)
+def route_path_strictly_nested(child: str, parent: str) -> bool:
+    """True when `child` is a strict sub-prefix of `parent` (same storage assumed)."""
+    child_prefix = route_path_prefix(child)
+    parent_prefix = route_path_prefix(parent)
+    return len(child_prefix) > len(parent_prefix) and child_prefix.startswith(parent_prefix)
 
 
 def join_key(prefix: str, key: str) -> str:
