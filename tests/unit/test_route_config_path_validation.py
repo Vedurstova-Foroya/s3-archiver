@@ -165,3 +165,25 @@ def test_from_env_allows_nested_routes_with_default_destinations(tmp_path: Path)
         "data/fae/",
         "data/fae/hourly/",
     ]
+
+
+@pytest.mark.unit()
+def test_from_env_rejects_default_destination_collision_across_source_storage(
+    tmp_path: Path,
+) -> None:
+    # Both routes share the same source path but live on different source storage,
+    # so the source check passes. With destination paths omitted, each destination
+    # defaults to its own source path "data/fae/" on the shared destination storage,
+    # so the destination check must still reject the collision.
+    first = _route(name="fae", source_path="data/fae/")
+    second = _route(name="other-storage", source_path="data/fae/")
+    source = second["source"]
+    assert isinstance(source, dict)
+    source["endpoint_url"] = "http://localstack-alt:4566"
+    for route in (first, second):
+        destination = route["destination"]
+        assert isinstance(destination, dict)
+        del destination["path"]
+
+    with pytest.raises(ConfigError, match="identical destination paths"):
+        _ = AppSettings.from_env(_env(tmp_path, [first, second]))
